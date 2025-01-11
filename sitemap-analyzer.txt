@@ -1,0 +1,77 @@
+Create a Next.js web application that analyzes SEO metadata from all pages listed in a sitemap.xml file.
+The app should start with a single input field with a default value of "https://www.veracode.com/sitemap.xml" and a search button. When the search button is clicked, it should:
+
+Parse the provided sitemap.xml
+Extract all URLs
+Visit each page
+Analyze the following metadata:
+
+Meta Title (60 char max)
+Meta Description (160 char max)
+Keywords & News Keywords
+OpenGraph tags (site_name, title, description, image)
+
+The app needs these specific features:
+Technical Implementation:
+
+Built with Next.js
+Use Cheerio for HTML parsing
+Axios for HTTP requests
+fast-xml-parser for XML processing
+React Query for state management
+API routes for handling requests
+
+Debug Features (to be removed in production):
+Detailed error panel below search showing:
+
+XML parsing status
+HTTP request codes
+Network errors
+Parsing errors
+Rate limiting issues
+Memory usage
+Processing time per page
+Stack traces
+Request/Response logs
+
+Page Analysis:
+Check for these specific meta tags:
+<meta name="news_keywords" content="" />
+<meta name="description" content="" />
+<meta name="keywords" content="" />
+<meta property="og:site_name" content="" />
+<meta property="og:title" content="" />
+<meta property="og:description" content="" />
+<meta property="og:image" content="" />
+
+Results Display:
+
+Table format showing:
+
+Page URL
+Pass/Fail status
+List of issues found
+Current values of problematic elements
+
+Export functionality
+Error Handling:
+
+Retry logic for failed requests
+Rate limiting with exponential backoff
+Appropriate timeouts
+Proper redirect handling
+SSL certificate validation
+Detailed error messaging during development
+
+The app should handle large sitemaps efficiently and show clear progress indicators during processing. The debug panel should make it easy to identify and troubleshoot any issues during development.
+
+The focus should be on reliability and detailed error reporting during development, with clean error handling for production. All debug features should be easily removable for the production build.
+For the scraping implementation:
+
+Use Next.js API routes to handle requests
+Fetch sitemap using axios
+Parse XML with fast-xml-parser
+Process each URL with appropriate rate limiting
+Parse HTML using Cheerio
+Extract and validate metadata
+Return structured results
