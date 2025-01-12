@@ -106,26 +106,26 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Sitemap SEO Analyzer</h1>
-          <p className="text-lg text-gray-600">Analyze your sitemap.xml for SEO issues and metadata completeness</p>
+        <div className="text-center mb-8 sm:mb-12">
+          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-3 sm:mb-4">Sitemap SEO Analyzer</h1>
+          <p className="text-base sm:text-lg text-gray-600 px-4">Analyze your sitemap.xml for SEO issues and metadata completeness</p>
         </div>
         
-        <div className="max-w-3xl mx-auto mb-12">
-          <form onSubmit={handleSubmit} className="bg-white shadow-sm rounded-lg p-6">
-            <div className="flex gap-4">
+        <div className="max-w-3xl mx-auto mb-8 sm:mb-12 px-4 sm:px-0">
+          <form onSubmit={handleSubmit} className="bg-white shadow-sm rounded-lg p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
               <input
                 type="url"
-                placeholder="https://www.example.com/sitemap.xml"
+                placeholder="Enter sitemap URL..."
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="flex-1 px-3 sm:px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm sm:text-base"
                 required
               />
               <button
                 type="submit"
                 disabled={isPending}
-                className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
+                className="px-4 sm:px-8 py-2 sm:py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors text-sm sm:text-base whitespace-nowrap"
               >
                 {isPending ? 'Analyzing...' : 'Analyze'}
               </button>

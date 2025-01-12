@@ -51,9 +51,9 @@ export function ResultsTable({ results }: ResultsTableProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-2xl font-bold text-gray-900">Analysis Results</h2>
-        <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+        <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Analysis Results</h2>
+        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           <div className="relative flex-grow sm:flex-grow-0">
             <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
               <Search className="h-4 w-4 text-gray-400" />
@@ -63,7 +63,7 @@ export function ResultsTable({ results }: ResultsTableProps) {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by title..."
-              className="pl-10 pr-4 py-2 w-full sm:w-64 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+              className="pl-10 pr-4 py-2 w-full sm:w-64 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
             />
             {searchQuery && (
               <button
@@ -76,7 +76,7 @@ export function ResultsTable({ results }: ResultsTableProps) {
           </div>
           <button
             onClick={handleExport}
-            className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors w-full sm:w-auto"
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors w-full sm:w-auto text-sm"
           >
             <Download className="h-4 w-4" />
             Export CSV
@@ -84,7 +84,7 @@ export function ResultsTable({ results }: ResultsTableProps) {
         </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-3">
         {filteredResults.map((result, index) => (
           <Card 
             key={index} 
@@ -93,41 +93,57 @@ export function ResultsTable({ results }: ResultsTableProps) {
             }`}
           >
             <CardContent className="p-0">
-              {/* Header - Always visible */}
               <button
                 onClick={() => toggleExpand(index)}
-                className="w-full text-left p-4 flex items-center gap-4"
+                className="w-full text-left p-3 sm:p-4 flex items-start sm:items-center gap-3 sm:gap-4"
               >
                 {expandedItems.has(index) ? (
-                  <ChevronDown className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                  <ChevronDown className="h-5 w-5 text-gray-400 flex-shrink-0 mt-1 sm:mt-0" />
                 ) : (
-                  <ChevronRight className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                  <ChevronRight className="h-5 w-5 text-gray-400 flex-shrink-0 mt-1 sm:mt-0" />
                 )}
                 
-                <div className="flex-grow min-w-0">
-                  <h3 className="text-lg font-medium text-gray-900 truncate">
-                    {result.metadata.title || 'Untitled Page'}
-                  </h3>
-                  <div className="flex items-center gap-2 mt-1">
-                    <a 
-                      href={result.url} 
-                      target="_blank" 
-                      rel="noopener noreferrer" 
-                      className="text-blue-600 hover:text-blue-800 text-sm truncate flex items-center gap-1"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {result.url}
-                      <ExternalLink className="h-3 w-3 flex-shrink-0" />
-                    </a>
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                    <h3 className="font-medium text-gray-900 truncate text-sm sm:text-base">
+                      {result.metadata.title || 'No title'}
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {result.issues.length > 0 ? (
+                        result.issues.slice(0, 2).map((issue, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-50 text-red-700"
+                          >
+                            {issue}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-green-50 text-green-700">
+                          No issues
+                        </span>
+                      )}
+                      {result.issues.length > 2 && (
+                        <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-50 text-gray-600">
+                          +{result.issues.length - 2} more
+                        </span>
+                      )}
+                    </div>
                   </div>
+                  <p className="text-sm text-gray-500 truncate mt-1">
+                    {result.url}
+                  </p>
                 </div>
 
-                {result.issues.length > 0 && (
-                  <div className="flex items-center gap-2 text-red-600 flex-shrink-0">
-                    <AlertCircle className="h-5 w-5" />
-                    <span className="text-sm font-medium">{result.issues.length} {result.issues.length === 1 ? 'issue' : 'issues'}</span>
-                  </div>
-                )}
+                <a
+                  href={result.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </a>
               </button>
 
               {/* Expanded Content */}

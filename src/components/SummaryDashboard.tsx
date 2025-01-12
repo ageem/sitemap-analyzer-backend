@@ -26,20 +26,20 @@ export function SummaryDashboard({ results }: SummaryDashboardProps) {
     .slice(0, 3) // Top 3 issues
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {/* Total URLs Card */}
       <Card className="relative overflow-hidden bg-gradient-to-br from-blue-50 to-white">
-        <div className="absolute right-0 top-0 h-24 w-24 translate-x-8 -translate-y-8 transform opacity-20">
+        <div className="absolute right-0 top-0 h-16 sm:h-24 w-16 sm:w-24 translate-x-6 sm:translate-x-8 -translate-y-6 sm:-translate-y-8 transform opacity-20">
           <Globe className="h-full w-full text-blue-600" />
         </div>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium text-blue-800">Total URLs</CardTitle>
+          <CardTitle className="text-xs sm:text-sm font-medium text-blue-800">Total URLs</CardTitle>
           <Globe className="h-4 w-4 text-blue-600" />
         </CardHeader>
         <CardContent>
           <div className="flex items-baseline gap-2">
-            <div className="text-3xl font-bold text-blue-900">{totalUrls}</div>
-            <div className="text-sm font-medium text-blue-700">pages</div>
+            <div className="text-2xl sm:text-3xl font-bold text-blue-900">{totalUrls}</div>
+            <div className="text-xs sm:text-sm font-medium text-blue-700">pages</div>
           </div>
           <div className="mt-2 h-1.5 w-full rounded-full bg-blue-100">
             <div className="h-full w-full rounded-full bg-blue-600" />
@@ -49,17 +49,17 @@ export function SummaryDashboard({ results }: SummaryDashboardProps) {
 
       {/* URLs Without Issues Card */}
       <Card className="relative overflow-hidden bg-gradient-to-br from-green-50 to-white">
-        <div className="absolute right-0 top-0 h-24 w-24 translate-x-8 -translate-y-8 transform opacity-20">
+        <div className="absolute right-0 top-0 h-16 sm:h-24 w-16 sm:w-24 translate-x-6 sm:translate-x-8 -translate-y-6 sm:-translate-y-8 transform opacity-20">
           <CheckCircle className="h-full w-full text-green-600" />
         </div>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium text-green-800">Passed Checks</CardTitle>
+          <CardTitle className="text-xs sm:text-sm font-medium text-green-800">Passed Checks</CardTitle>
           <CheckCircle className="h-4 w-4 text-green-600" />
         </CardHeader>
         <CardContent>
           <div className="flex items-baseline gap-2">
-            <div className="text-3xl font-bold text-green-900">{urlsWithoutIssues}</div>
-            <div className="text-sm font-medium text-green-700">
+            <div className="text-2xl sm:text-3xl font-bold text-green-900">{urlsWithoutIssues}</div>
+            <div className="text-xs sm:text-sm font-medium text-green-700">
               ({((urlsWithoutIssues / totalUrls) * 100).toFixed(1)}%)
             </div>
           </div>
@@ -74,17 +74,17 @@ export function SummaryDashboard({ results }: SummaryDashboardProps) {
 
       {/* URLs With Issues Card */}
       <Card className="relative overflow-hidden bg-gradient-to-br from-red-50 to-white">
-        <div className="absolute right-0 top-0 h-24 w-24 translate-x-8 -translate-y-8 transform opacity-20">
+        <div className="absolute right-0 top-0 h-16 sm:h-24 w-16 sm:w-24 translate-x-6 sm:translate-x-8 -translate-y-6 sm:-translate-y-8 transform opacity-20">
           <AlertCircle className="h-full w-full text-red-600" />
         </div>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium text-red-800">Need Attention</CardTitle>
+          <CardTitle className="text-xs sm:text-sm font-medium text-red-800">Need Attention</CardTitle>
           <AlertCircle className="h-4 w-4 text-red-600" />
         </CardHeader>
         <CardContent>
           <div className="flex items-baseline gap-2">
-            <div className="text-3xl font-bold text-red-900">{urlsWithIssues}</div>
-            <div className="text-sm font-medium text-red-700">
+            <div className="text-2xl sm:text-3xl font-bold text-red-900">{urlsWithIssues}</div>
+            <div className="text-xs sm:text-sm font-medium text-red-700">
               ({((urlsWithIssues / totalUrls) * 100).toFixed(1)}%)
             </div>
           </div>
@@ -99,11 +99,11 @@ export function SummaryDashboard({ results }: SummaryDashboardProps) {
 
       {/* Top Issues Card */}
       <Card className="relative overflow-hidden bg-gradient-to-br from-amber-50 to-white">
-        <div className="absolute right-0 top-0 h-24 w-24 translate-x-8 -translate-y-8 transform opacity-20">
+        <div className="absolute right-0 top-0 h-16 sm:h-24 w-16 sm:w-24 translate-x-6 sm:translate-x-8 -translate-y-6 sm:-translate-y-8 transform opacity-20">
           <AlertTriangle className="h-full w-full text-amber-600" />
         </div>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium text-amber-800">Top Issues</CardTitle>
+          <CardTitle className="text-xs sm:text-sm font-medium text-amber-800">Top Issues</CardTitle>
           <AlertTriangle className="h-4 w-4 text-amber-600" />
         </CardHeader>
         <CardContent>
