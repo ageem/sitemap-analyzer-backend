@@ -16,7 +16,7 @@ interface ApiResponse {
 interface Progress {
   total: number;
   current: number;
-  status: string;
+  status: 'starting' | 'analyzing' | 'complete';
 }
 
 export default function Home() {
