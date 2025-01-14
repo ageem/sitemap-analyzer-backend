@@ -123,19 +123,17 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter, 
       const batchPromises = batch.map(async (pageUrl) => {
         let retries = 0
         let success = false
-        let result = null
+        let result: AnalysisResult | null = null
 
-        while (retries < MAX_RETRIES && !success) {
+        while (!success && retries < MAX_RETRIES) {
           try {
-            await new Promise(resolve => setTimeout(resolve, currentDelay))
-            
             const pageStartTime = Date.now()
             const response = await axios.get(pageUrl, { timeout: TIMEOUT })
-            const loadSpeed = Date.now() - pageStartTime
-            
             const $ = cheerio.load(response.data)
+            const loadSpeed = Date.now() - pageStartTime
             const pageSize = Buffer.byteLength(response.data, 'utf8')
-            
+
+            // Extract metadata
             const metadata = {
               title: $('title').text() || '',
               description: $('meta[name="description"]').attr('content') || '',
