@@ -1,4 +1,9 @@
-export interface MetaData {
+export type JsonPrimitive = string | number | boolean | null
+export type JsonArray = JsonValue[]
+export type JsonObject = { [key: string]: JsonValue }
+export type JsonValue = JsonPrimitive | JsonObject | JsonArray
+
+export interface MetaData extends JsonObject {
   title: string;
   description: string;
   keywords: string;
@@ -9,12 +14,12 @@ export interface MetaData {
   ogImage: string;
 }
 
-export interface TechnicalSpecs {
-  loadSpeed: string; // Store as string to ensure serialization
-  pageSize: string; // Store as string to ensure serialization
+export interface TechnicalSpecs extends JsonObject {
+  loadSpeed: string;
+  pageSize: string;
 }
 
-export interface MemoryUsageInfo {
+export interface MemoryUsage extends JsonObject {
   heapUsed: string;
   heapTotal: string;
   rss: string;
@@ -22,23 +27,25 @@ export interface MemoryUsageInfo {
   arrayBuffers: string;
 }
 
-export interface DebugInfo {
+export interface RequestLog extends JsonObject {
+  url: string;
+  status: string;
+  duration: string;
+}
+
+export interface DebugInfo extends JsonObject {
   xmlParsingStatus: string;
-  httpStatus: string; // Store as string to ensure serialization
+  httpStatus: string;
   networkErrors: string[];
   parsingErrors: string[];
   rateLimitingIssues: string[];
-  memoryUsage: MemoryUsageInfo;
-  processingTime: string; // Store as string to ensure serialization
+  memoryUsage: MemoryUsage;
+  processingTime: string;
   stackTrace?: string;
-  requestLogs: {
-    url: string;
-    status: string; // Store as string to ensure serialization
-    duration: string; // Store as string to ensure serialization
-  }[];
+  requestLogs: RequestLog[];
 }
 
-export interface AnalysisResult {
+export interface AnalysisResult extends JsonObject {
   url: string;
   status: 'pass' | 'fail';
   issues: string[];
@@ -47,17 +54,23 @@ export interface AnalysisResult {
   debugInfo?: DebugInfo;
 }
 
-export interface AnalysisResponse {
-  results: AnalysisResult[];
-  debugInfo: DebugInfo;
-}
-
-export interface ErrorResponse {
+export interface ErrorResult extends JsonObject {
   error: string;
   debugInfo: DebugInfo;
 }
 
-// Ensure all data stored in Prisma is serializable
-export type SerializableData = {
-  [key: string]: string | number | boolean | null | SerializableData | Array<string | number | boolean | null | SerializableData>;
+export type AnalysisResponse = {
+  type: 'progress';
+  progress: {
+    total: number;
+    current: number;
+    status: 'starting' | 'analyzing' | 'complete';
+  };
+} | {
+  type: 'complete';
+  results: AnalysisResult[];
+} | {
+  type: 'error';
+  error: string;
+  debugInfo: DebugInfo;
 }

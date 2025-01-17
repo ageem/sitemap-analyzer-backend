@@ -1,4 +1,4 @@
-import { type DebugInfo, type AnalysisResult } from '@/types'
+import { type DebugInfo, type AnalysisResult, type JsonValue } from '@/types'
 
 export type JsonValue = 
   | string 
@@ -8,7 +8,7 @@ export type JsonValue =
   | { [key: string]: JsonValue } 
   | JsonValue[]
 
-export function serializeForPrisma(data: unknown): string {
+export function serializeForPrisma<T extends JsonValue>(data: T): string {
   return JSON.stringify(data, (_, value) => {
     if (typeof value === 'bigint') {
       return value.toString()
@@ -28,13 +28,13 @@ export function deserializeFromPrisma<T>(data: string | null): T | null {
   return JSON.parse(data) as T
 }
 
-export function serializeDebugInfo(debugInfo: DebugInfo): JsonValue {
+export function serializeDebugInfo(debugInfo: DebugInfo): DebugInfo {
   return {
     xmlParsingStatus: debugInfo.xmlParsingStatus,
     httpStatus: String(debugInfo.httpStatus),
-    networkErrors: debugInfo.networkErrors,
-    parsingErrors: debugInfo.parsingErrors,
-    rateLimitingIssues: debugInfo.rateLimitingIssues,
+    networkErrors: debugInfo.networkErrors.map(String),
+    parsingErrors: debugInfo.parsingErrors.map(String),
+    rateLimitingIssues: debugInfo.rateLimitingIssues.map(String),
     memoryUsage: {
       heapUsed: String(debugInfo.memoryUsage.heapUsed),
       heapTotal: String(debugInfo.memoryUsage.heapTotal),
@@ -51,7 +51,7 @@ export function serializeDebugInfo(debugInfo: DebugInfo): JsonValue {
   }
 }
 
-export function serializeAnalysisResult(result: AnalysisResult): JsonValue {
+export function serializeAnalysisResult(result: AnalysisResult): AnalysisResult {
   return {
     url: result.url,
     status: result.status,
