@@ -123,7 +123,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
     }
 
     // Remove duplicates
-    const uniqueUrls = [...new Set(urls)]
+    const uniqueUrls = Array.from(new Set(urls))
     const totalUrls = uniqueUrls.length
     const results: AnalysisResult[] = []
     let currentDelay = MIN_DELAY
