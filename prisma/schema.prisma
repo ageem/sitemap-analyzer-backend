@@ -29,7 +29,7 @@ model SearchHistory {
   sitemapUrl  String
   searchDate  DateTime @default(now())
   status      String   // 'completed', 'failed', 'in_progress'
-  results     Json?    // Store the analysis results
+  results     String?  // Store the analysis results as a JSON string
   user        User     @relation(fields: [userId], references: [id])
 
   @@index([userId])

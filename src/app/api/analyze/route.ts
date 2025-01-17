@@ -43,34 +43,48 @@ export async function POST(req: Request) {
   }
 
   try {
-    const body = await req.json().catch(() => ({}))
-    const url = body?.url
-
-    if (!url || typeof url !== 'string' || !url.startsWith('http')) {
-      throw new Error('Invalid URL provided. URL must be a string and start with http:// or https://')
-    }
-
     const session = await getServerSession(authOptions)
-    let userId: string | undefined
-
-    if (session?.user?.email) {
-      const user = await prisma.user.findUnique({
-        where: { email: session.user.email },
-        select: { id: true },
-      })
-      userId = user?.id
+    if (!session?.user?.email) {
+      return NextResponse.json(
+        { error: 'Not authenticated', status: 'failed' } as ErrorResponse,
+        { status: 401 }
+      )
     }
 
-    // Create initial search history record if user is authenticated
-    if (userId) {
-      const searchHistory = await prisma.searchHistory.create({
-        data: {
-          userId,
-          sitemapUrl: url,
-          status: 'in_progress',
-          results: Prisma.JsonNull,
-        },
-      })
+    const { url } = await req.json()
+    if (!url) {
+      return NextResponse.json(
+        { error: 'URL is required', status: 'failed' } as ErrorResponse,
+        { status: 400 }
+      )
+    }
+
+    debugInfo.url = url
+    debugInfo.userEmail = session.user.email
+
+    // Find the user
+    const user = await prisma.user.findUnique({
+      where: { email: session.user.email },
+    })
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'User not found', status: 'failed' } as ErrorResponse,
+        { status: 404 }
+      )
+    }
+
+    // Create a search history entry
+    const searchHistory = await prisma.searchHistory.create({
+      data: {
+        userId: user.id,
+        sitemapUrl: url,
+        status: 'in_progress',
+        results: JSON.stringify({ status: 'starting' }),
+      },
+    })
+
+    if (searchHistory) {
       searchHistoryId = searchHistory.id
     }
 
@@ -89,18 +103,17 @@ export async function POST(req: Request) {
     processRequest(url, writer, debugInfo, startTime, searchHistoryId).catch(async (error) => {
       console.error('Background processing error:', error)
       if (searchHistoryId) {
-        const errorResponse: ErrorResponse = {
+        const errorData = {
           error: error instanceof Error ? error.message : String(error),
-          debugInfo,
-          status: 'failed',
-          data: { error: String(error), debugInfo }
+          debugInfo: JSON.parse(JSON.stringify(debugInfo)), // Ensure serializable
+          status: 'failed'
         }
-        
+
         await prisma.searchHistory.update({
           where: { id: searchHistoryId },
           data: {
             status: 'failed',
-            results: JSON.stringify(errorResponse),
+            results: JSON.stringify(errorData),
           },
         })
       }
@@ -109,11 +122,10 @@ export async function POST(req: Request) {
     return response
   } catch (error) {
     console.error('Error in analyze route:', error)
-    const errorResponse: ErrorResponse = {
+    const errorData = {
       error: error instanceof Error ? error.message : 'An unexpected error occurred',
-      debugInfo,
-      status: 'failed',
-      data: { error: String(error), debugInfo }
+      debugInfo: JSON.parse(JSON.stringify(debugInfo)), // Ensure serializable
+      status: 'failed'
     }
 
     if (searchHistoryId) {
@@ -121,12 +133,12 @@ export async function POST(req: Request) {
         where: { id: searchHistoryId },
         data: {
           status: 'failed',
-          results: JSON.stringify(errorResponse),
+          results: JSON.stringify(errorData),
         },
       })
     }
 
-    return NextResponse.json(errorResponse, { status: 500 })
+    return NextResponse.json(errorData, { status: 500 })
   } finally {
     try {
       await writer?.close()
@@ -137,44 +149,18 @@ export async function POST(req: Request) {
 }
 
 async function processRequest(url: string, writer: WritableStreamDefaultWriter | undefined, debugInfo: DebugInfo, startTime: number, searchHistoryId?: string) {
-  const encoder = new TextEncoder()
-  
   try {
-    // Extract all URLs recursively from sitemaps
-    debugInfo.xmlParsingStatus = 'fetching'
-    const urls = await extractUrlsFromSitemap(url, debugInfo)
-    debugInfo.xmlParsingStatus = 'success'
-
-    if (!urls.length) {
-      throw new Error('No URLs found in sitemap(s)')
-    }
-
-    // Remove duplicates and invalid URLs
-    const uniqueUrls = Array.from(new Set(urls)).filter(url => {
-      try {
-        new URL(url)
-        return true
-      } catch {
-        debugInfo.parsingErrors.push(`Invalid URL found: ${url}`)
-        return false
-      }
-    })
-
+    const uniqueUrls = await extractUrlsFromSitemap(url, debugInfo)
     const totalUrls = uniqueUrls.length
     const results: any[] = []
     let currentDelay = MIN_DELAY
     let processedCount = 0
 
-    // Send initial progress
-    await sendProgress(writer, {
-      total: totalUrls,
-      current: 0,
-      status: 'starting',
-    })
-
     // Process URLs in batches
-    for (let i = 0; i < uniqueUrls.length; i += CONCURRENT_REQUESTS) {
-      const batch = uniqueUrls.slice(i, i + CONCURRENT_REQUESTS)
+    for (let i = 0; i < uniqueUrls.length; i += BATCH_SIZE) {
+      const batch = uniqueUrls.slice(i, i + BATCH_SIZE)
+      
+      // Process each URL in the batch
       const batchPromises = batch.map(async (pageUrl) => {
         let retries = 0
         let success = false
@@ -182,91 +168,68 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
 
         while (!success && retries < MAX_RETRIES) {
           try {
-            const pageStartTime = Date.now()
-            const response = await axios.get(pageUrl, { 
+            const response = await axios.get(pageUrl, {
               timeout: 10000,
               maxRedirects: 5,
               validateStatus: (status) => status < 400,
             })
+
             const $ = cheerio.load(response.data)
-            const loadSpeed = Date.now() - pageStartTime
-            const pageSize = Buffer.byteLength(response.data, 'utf8')
-
-            // Extract metadata
-            const metadata = {
-              title: $('title').text().trim() || '',
-              description: $('meta[name="description"]').attr('content')?.trim() || '',
-              keywords: $('meta[name="keywords"]').attr('content')?.trim() || '',
-              newsKeywords: $('meta[name="news_keywords"]').attr('content')?.trim() || '',
-              ogSiteName: $('meta[property="og:site_name"]').attr('content')?.trim() || '',
-              ogTitle: $('meta[property="og:title"]').attr('content')?.trim() || '',
-              ogDescription: $('meta[property="og:description"]').attr('content')?.trim() || '',
-              ogImage: $('meta[property="og:image"]').attr('content')?.trim() || '',
-            }
-
+            const title = $('title').text().trim()
+            const description = $('meta[name="description"]').attr('content')?.trim() || ''
             const issues: string[] = []
-            
-            // Validate metadata
-            if (!metadata.title) {
-              issues.push('Missing title')
-            } else if (metadata.title.length > 60) {
-              issues.push('Title exceeds 60 characters')
-            }
-            if (!metadata.description) {
-              issues.push('Missing description')
-            } else if (metadata.description.length > 160) {
-              issues.push('Description exceeds 160 characters')
-            }
-            if (!metadata.keywords) {
-              issues.push('Missing keywords')
-            }
-            if (!metadata.ogImage) {
-              issues.push('Missing OpenGraph image')
-            }
+
+            // Check for common SEO issues
+            if (!title) issues.push('Missing title')
+            if (!description) issues.push('Missing meta description')
+            if (title && title.length > 60) issues.push('Title too long (>60 chars)')
+            if (description && description.length > 160) issues.push('Meta description too long (>160 chars)')
 
             result = {
               url: pageUrl,
-              status: issues.length === 0 ? 'pass' : 'fail',
+              title,
+              description,
               issues,
-              metadata,
-              technicalSpecs: {
-                loadSpeed,
-                pageSize,
-              }
-            }
-
-            debugInfo.requestLogs.push({
-              url: pageUrl,
-              status: response.status,
-              duration: Date.now() - pageStartTime,
-            })
-
-            // Adjust delay based on response time
-            if (loadSpeed < 500) {
-              currentDelay = Math.max(MIN_DELAY, currentDelay - 50)
-            } else {
-              currentDelay += 50
             }
 
             success = true
+            debugInfo.requestLogs.push({
+              url: pageUrl,
+              status: response.status,
+              duration: Date.now() - startTime,
+            })
+
+            // Adaptive rate limiting
+            if (retries === 0) {
+              currentDelay = Math.max(MIN_DELAY, currentDelay - 50)
+            }
           } catch (error) {
             retries++
-            if (error instanceof Error) {
-              if (retries === MAX_RETRIES) {
-                debugInfo.networkErrors.push(`Failed to process ${pageUrl}: ${error.message}`)
-              }
-              if (axios.isAxiosError(error)) {
-                if (error.response?.status === 429) {
-                  debugInfo.rateLimitingIssues.push(`Rate limited on ${pageUrl}`)
-                  currentDelay *= 2  // Double the delay when rate limited
-                  await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries) * 1000))
-                } else {
-                  debugInfo.networkErrors.push(`HTTP ${error.response?.status} error for ${pageUrl}: ${error.message}`)
-                }
+            currentDelay += 100 // Increase delay on error
+
+            if (error.response?.status === 429) {
+              debugInfo.rateLimitingIssues.push(`Rate limit hit for ${pageUrl}`)
+              await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY))
+            } else if (error.code === 'ECONNABORTED') {
+              debugInfo.networkErrors.push(`Timeout for ${pageUrl}`)
+            } else {
+              debugInfo.networkErrors.push(`Error fetching ${pageUrl}: ${error.message}`)
+            }
+
+            if (retries === MAX_RETRIES) {
+              result = {
+                url: pageUrl,
+                error: error.message,
+                issues: ['Failed to analyze page'],
               }
             }
           }
+
+          if (!success) {
+            await new Promise(resolve => setTimeout(resolve, currentDelay))
+          }
         }
+
         return result
       })
 
@@ -279,88 +242,52 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
       await sendProgress(writer, {
         total: totalUrls,
         current: processedCount,
-        status: 'analyzing',
+        status: processedCount === totalUrls ? 'complete' : 'analyzing',
       })
 
-      // Add a small delay between batches to avoid overwhelming the server
-      await new Promise(resolve => setTimeout(resolve, currentDelay))
+      // Add small delay between batches
+      if (i + BATCH_SIZE < uniqueUrls.length) {
+        await new Promise(resolve => setTimeout(resolve, currentDelay))
+      }
     }
 
-    // Send final results
-    debugInfo.processingTime = (Date.now() - startTime) / 1000
-    const memUsage = process.memoryUsage()
-    debugInfo.memoryUsage = {
-      heapUsed: memUsage.heapUsed,
-      heapTotal: memUsage.heapTotal,
-      rss: memUsage.rss,
-      external: memUsage.external,
-      arrayBuffers: memUsage.arrayBuffers,
+    const analysisData = {
+      urlsAnalyzed: results.length,
+      issues: results.reduce((sum, r) => sum + (r.issues?.length || 0), 0),
+      details: results,
+      debugInfo: JSON.parse(JSON.stringify(debugInfo)),
     }
 
     // Update search history if user is authenticated
     if (searchHistoryId) {
-      const analysisResponse = {
-        results,
-        debugInfo,
-      }
       await prisma.searchHistory.update({
         where: { id: searchHistoryId },
         data: {
           status: 'complete',
-          results: JSON.stringify(analysisResponse),
+          results: JSON.stringify(analysisData),
         },
-      }).catch(console.error)
+      })
     }
 
-    await writer?.write(encoder.encode(`data: ${JSON.stringify({
-      type: 'complete',
-      results,
-      debugInfo
-    })}\n\n`))
+    return analysisData
   } catch (error) {
     console.error('Error processing sitemap:', error)
-    debugInfo.processingTime = (Date.now() - startTime) / 1000
-    const memUsage = process.memoryUsage()
-    debugInfo.memoryUsage = {
-      heapUsed: memUsage.heapUsed,
-      heapTotal: memUsage.heapTotal,
-      rss: memUsage.rss,
-      external: memUsage.external,
-      arrayBuffers: memUsage.arrayBuffers,
-    }
-
-    // Update search history if user is authenticated
     if (searchHistoryId) {
-      const errorResponse: ErrorResponse = {
+      const errorData = {
         error: error instanceof Error ? error.message : String(error),
-        debugInfo,
+        debugInfo: JSON.parse(JSON.stringify(debugInfo)),
         status: 'failed',
-        data: { error: String(error), debugInfo }
       }
+
       await prisma.searchHistory.update({
         where: { id: searchHistoryId },
         data: {
           status: 'failed',
-          results: JSON.stringify(errorResponse),
+          results: JSON.stringify(errorData),
         },
-      }).catch(console.error)
+      })
     }
-
-    try {
-      await writer?.write(encoder.encode(`data: ${JSON.stringify({
-        type: 'error',
-        error: error instanceof Error ? error.message : String(error),
-        debugInfo,
-      })}\n\n`))
-    } catch (writeError) {
-      console.error('Error writing to stream:', writeError)
-    }
-  } finally {
-    try {
-      await writer?.close()
-    } catch (closeError) {
-      console.error('Error closing writer:', closeError)
-    }
+    throw error
   }
 }
 
