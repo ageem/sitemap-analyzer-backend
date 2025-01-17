@@ -22,7 +22,8 @@ interface Progress {
 export async function POST(req: Request) {
   const startTime = Date.now()
   const encoder = new TextEncoder()
-  let writer: WritableStreamDefaultWriter
+  let writer: WritableStreamDefaultWriter | undefined
+  let searchHistoryId: string | undefined
   const debugInfo: DebugInfo = {
     xmlParsingStatus: 'pending',
     httpStatus: 0,
@@ -38,7 +39,6 @@ export async function POST(req: Request) {
     const { url } = await req.json()
     const session = await getServerSession(authOptions)
     let userId: string | undefined
-    let searchHistoryId: string | undefined
 
     if (session?.user?.email) {
       const user = await prisma.user.findUnique({
@@ -91,7 +91,7 @@ export async function POST(req: Request) {
     }
 
     try {
-      await writer.write(encoder.encode(`data: ${JSON.stringify({
+      await writer?.write(encoder.encode(`data: ${JSON.stringify({
         type: 'error',
         error: error instanceof Error ? error.message : 'An error occurred while processing the sitemap',
       })}\n\n`))
@@ -100,14 +100,14 @@ export async function POST(req: Request) {
     }
   } finally {
     try {
-      await writer.close()
+      await writer?.close()
     } catch (closeError) {
       console.error('Error closing writer:', closeError)
     }
   }
 }
 
-async function processRequest(url: string, writer: WritableStreamDefaultWriter, debugInfo: DebugInfo, startTime: number, searchHistoryId?: string) {
+async function processRequest(url: string, writer: WritableStreamDefaultWriter | undefined, debugInfo: DebugInfo, startTime: number, searchHistoryId?: string) {
   const encoder = new TextEncoder()
   
   try {
@@ -248,7 +248,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter, 
       })
     }
 
-    await writer.write(encoder.encode(`data: ${JSON.stringify({
+    await writer?.write(encoder.encode(`data: ${JSON.stringify({
       type: 'complete',
       results,
       debugInfo
@@ -270,7 +270,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter, 
     }
 
     try {
-      await writer.write(encoder.encode(`data: ${JSON.stringify({
+      await writer?.write(encoder.encode(`data: ${JSON.stringify({
         type: 'error',
         error: error instanceof Error ? error.message : 'An error occurred while processing the sitemap',
       })}\n\n`))
@@ -279,7 +279,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter, 
     }
   } finally {
     try {
-      await writer.close()
+      await writer?.close()
     } catch (closeError) {
       console.error('Error closing writer:', closeError)
     }
@@ -324,9 +324,9 @@ async function extractUrlsFromSitemap(sitemapUrl: string, debugInfo: DebugInfo):
   }
 }
 
-async function sendProgress(writer: WritableStreamDefaultWriter, progress: Progress) {
+async function sendProgress(writer: WritableStreamDefaultWriter | undefined, progress: Progress) {
   const encoder = new TextEncoder()
-  await writer.write(encoder.encode(`data: ${JSON.stringify({
+  await writer?.write(encoder.encode(`data: ${JSON.stringify({
     type: 'progress',
     ...progress
   })}\n\n`))
