@@ -5,7 +5,7 @@ import { XMLParser } from 'fast-xml-parser'
 import * as cheerio from 'cheerio'
 import { type AnalysisResult, type DebugInfo } from '@/types'
 import { prisma } from '@/lib/db'
-import { authOptions } from '../auth/[...nextauth]/route'
+import { authOptions } from '@/lib/auth'
 
 const RATE_LIMIT_DELAY = 1000 // 1 second between requests
 const MAX_RETRIES = 3
