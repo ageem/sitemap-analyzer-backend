@@ -103,17 +103,26 @@ export async function POST(req: Request) {
     processRequest(url, writer, debugInfo, startTime, searchHistoryId).catch(async (error) => {
       console.error('Background processing error:', error)
       if (searchHistoryId) {
-        const errorData = {
-          error: error instanceof Error ? error.message : String(error),
-          debugInfo: JSON.parse(JSON.stringify(debugInfo)), // Ensure serializable
-          status: 'failed'
-        }
-
         await prisma.searchHistory.update({
           where: { id: searchHistoryId },
           data: {
             status: 'failed',
-            results: JSON.stringify(errorData),
+            results: JSON.stringify({
+              error: error instanceof Error ? error.message : String(error),
+              debugInfo: {
+                startTime,
+                memoryUsage: {
+                  heapUsed: String(memUsage.heapUsed),
+                  heapTotal: String(memUsage.heapTotal),
+                  rss: String(memUsage.rss),
+                  external: String(memUsage.external),
+                  arrayBuffers: String(memUsage.arrayBuffers)
+                },
+                errors: debugInfo.networkErrors || [],
+                issues: debugInfo.rateLimitingIssues || [],
+                logs: debugInfo.requestLogs || []
+              }
+            })
           },
         })
       }
@@ -122,23 +131,37 @@ export async function POST(req: Request) {
     return response
   } catch (error) {
     console.error('Error in analyze route:', error)
-    const errorData = {
-      error: error instanceof Error ? error.message : 'An unexpected error occurred',
-      debugInfo: JSON.parse(JSON.stringify(debugInfo)), // Ensure serializable
-      status: 'failed'
-    }
-
+    const memUsage = process.memoryUsage()
+    
     if (searchHistoryId) {
       await prisma.searchHistory.update({
         where: { id: searchHistoryId },
         data: {
           status: 'failed',
-          results: JSON.stringify(errorData),
+          results: JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            debugInfo: {
+              startTime,
+              memoryUsage: {
+                heapUsed: String(memUsage.heapUsed),
+                heapTotal: String(memUsage.heapTotal),
+                rss: String(memUsage.rss),
+                external: String(memUsage.external),
+                arrayBuffers: String(memUsage.arrayBuffers)
+              },
+              errors: debugInfo.networkErrors || [],
+              issues: debugInfo.rateLimitingIssues || [],
+              logs: debugInfo.requestLogs || []
+            }
+          })
         },
       })
     }
 
-    return NextResponse.json(errorData, { status: 500 })
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : String(error),
+      status: 'failed'
+    }, { status: 500 })
   } finally {
     try {
       await writer?.close()
@@ -255,7 +278,19 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
       urlsAnalyzed: results.length,
       issues: results.reduce((sum, r) => sum + (r.issues?.length || 0), 0),
       details: results,
-      debugInfo: JSON.parse(JSON.stringify(debugInfo)),
+      debugInfo: {
+        startTime,
+        memoryUsage: {
+          heapUsed: String(memUsage.heapUsed),
+          heapTotal: String(memUsage.heapTotal),
+          rss: String(memUsage.rss),
+          external: String(memUsage.external),
+          arrayBuffers: String(memUsage.arrayBuffers)
+        },
+        errors: debugInfo.networkErrors || [],
+        issues: debugInfo.rateLimitingIssues || [],
+        logs: debugInfo.requestLogs || []
+      }
     }
 
     // Update search history if user is authenticated
@@ -275,7 +310,19 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
     if (searchHistoryId) {
       const errorData = {
         error: error instanceof Error ? error.message : String(error),
-        debugInfo: JSON.parse(JSON.stringify(debugInfo)),
+        debugInfo: {
+          startTime,
+          memoryUsage: {
+            heapUsed: String(memUsage.heapUsed),
+            heapTotal: String(memUsage.heapTotal),
+            rss: String(memUsage.rss),
+            external: String(memUsage.external),
+            arrayBuffers: String(memUsage.arrayBuffers)
+          },
+          errors: debugInfo.networkErrors || [],
+          issues: debugInfo.rateLimitingIssues || [],
+          logs: debugInfo.requestLogs || []
+        },
         status: 'failed',
       }
 

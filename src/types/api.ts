@@ -34,24 +34,8 @@ export interface AnalysisResult {
   error?: string
 }
 
-export interface DebugInfo {
-  startTime: number
-  memoryUsage: {
-    heapUsed: number
-    heapTotal: number
-    rss: number
-    external: number
-    arrayBuffers: number
-  }
-  parsingErrors: string[]
-  networkErrors: string[]
-  rateLimitingIssues: string[]
-  requestLogs: Array<{
-    url: string
-    status: number
-    duration: number
-  }>
-  [key: string]: any
+export type DebugInfo = {
+  [key: string]: string | number | boolean | null | { [key: string]: string | number | boolean | null } | Array<string | number | boolean | null>
 }
 
 export interface ErrorResponse {
