@@ -28,18 +28,20 @@ export async function POST(req: Request) {
   let searchHistoryId: string | undefined
   const memUsage = process.memoryUsage()
   const debugInfo: DebugInfo = {
-    startTime,
-    memoryUsage: {
-      heapUsed: memUsage.heapUsed,
-      heapTotal: memUsage.heapTotal,
-      rss: memUsage.rss,
-      external: memUsage.external,
-      arrayBuffers: memUsage.arrayBuffers,
-    },
-    parsingErrors: [],
+    xmlParsingStatus: 'pending',
+    httpStatus: '0',
     networkErrors: [],
+    parsingErrors: [],
     rateLimitingIssues: [],
-    requestLogs: []
+    memoryUsage: {
+      heapUsed: String(memUsage.heapUsed),
+      heapTotal: String(memUsage.heapTotal),
+      rss: String(memUsage.rss),
+      external: String(memUsage.external),
+      arrayBuffers: String(memUsage.arrayBuffers)
+    },
+    processingTime: '0',
+    requestLogs: [],
   }
 
   try {
@@ -208,11 +210,34 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
             if (title && title.length > 60) issues.push('Title too long (>60 chars)')
             if (description && description.length > 160) issues.push('Meta description too long (>160 chars)')
 
+            const endTime = Date.now()
             result = {
               url: pageUrl,
-              title,
-              description,
+              status: issues.length > 0 ? 'fail' : 'pass',
               issues,
+              metadata: {
+                title: $('title').text() || '',
+                description: $('meta[name="description"]').attr('content') || '',
+                keywords: $('meta[name="keywords"]').attr('content') || '',
+                newsKeywords: $('meta[name="news_keywords"]').attr('content') || '',
+                ogSiteName: $('meta[property="og:site_name"]').attr('content') || '',
+                ogTitle: $('meta[property="og:title"]').attr('content') || '',
+                ogDescription: $('meta[property="og:description"]').attr('content') || '',
+                ogImage: $('meta[property="og:image"]').attr('content') || '',
+              },
+              technicalSpecs: {
+                loadSpeed: String(endTime - startTime),
+                pageSize: String(response.data.length),
+              },
+              debugInfo: {
+                ...debugInfo,
+                processingTime: String((Date.now() - startTime) / 1000),
+                requestLogs: debugInfo.requestLogs.map(log => ({
+                  ...log,
+                  status: String(log.status),
+                  duration: String(log.duration)
+                }))
+              },
             }
 
             success = true
@@ -279,18 +304,14 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
       issues: results.reduce((sum, r) => sum + (r.issues?.length || 0), 0),
       details: results,
       debugInfo: {
-        startTime,
-        memoryUsage: {
-          heapUsed: String(memUsage.heapUsed),
-          heapTotal: String(memUsage.heapTotal),
-          rss: String(memUsage.rss),
-          external: String(memUsage.external),
-          arrayBuffers: String(memUsage.arrayBuffers)
-        },
-        errors: debugInfo.networkErrors || [],
-        issues: debugInfo.rateLimitingIssues || [],
-        logs: debugInfo.requestLogs || []
-      }
+        ...debugInfo,
+        processingTime: String((Date.now() - startTime) / 1000),
+        requestLogs: debugInfo.requestLogs.map(log => ({
+          ...log,
+          status: String(log.status),
+          duration: String(log.duration)
+        }))
+      },
     }
 
     // Update search history if user is authenticated
