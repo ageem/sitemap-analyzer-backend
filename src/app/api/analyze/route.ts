@@ -37,6 +37,11 @@ export async function POST(req: Request) {
 
   try {
     const { url } = await req.json()
+
+    if (!url || typeof url !== 'string') {
+      throw new Error('Invalid URL provided')
+    }
+
     const session = await getServerSession(authOptions)
     let userId: string | undefined
 
@@ -86,7 +91,8 @@ export async function POST(req: Request) {
         data: {
           status: 'failed',
           results: JSON.stringify({ 
-            error: error instanceof Error ? error.message : String(error) 
+            error: error instanceof Error ? error.message : String(error),
+            debugInfo,
           }),
         },
       })
@@ -96,6 +102,7 @@ export async function POST(req: Request) {
       await writer?.write(encoder.encode(`data: ${JSON.stringify({
         type: 'error',
         error: error instanceof Error ? error.message : String(error),
+        debugInfo,
       })}\n\n`))
     } catch (writeError) {
       console.error('Error writing to stream:', writeError)
@@ -224,7 +231,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
 
       // Wait for batch to complete
       const batchResults = await Promise.all(batchPromises)
-      results.push(...batchResults.filter(r => r !== null))
+      results.push(...batchResults.filter(r => r !== null) as AnalysisResult[])
       processedCount += batch.length
 
       // Send progress update
@@ -233,6 +240,9 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
         current: processedCount,
         status: 'analyzing',
       })
+
+      // Add a small delay between batches to avoid overwhelming the server
+      await new Promise(resolve => setTimeout(resolve, currentDelay))
     }
 
     // Send final results
@@ -245,7 +255,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
         where: { id: searchHistoryId },
         data: {
           status: 'complete',
-          results: JSON.stringify(results),
+          results: JSON.stringify({ results, debugInfo }),
         },
       })
     }
@@ -267,7 +277,8 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
         data: {
           status: 'failed',
           results: JSON.stringify({ 
-            error: error instanceof Error ? error.message : String(error) 
+            error: error instanceof Error ? error.message : String(error),
+            debugInfo,
           }),
         },
       })
@@ -277,6 +288,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
       await writer?.write(encoder.encode(`data: ${JSON.stringify({
         type: 'error',
         error: error instanceof Error ? error.message : String(error),
+        debugInfo,
       })}\n\n`))
     } catch (writeError) {
       console.error('Error writing to stream:', writeError)
@@ -296,8 +308,18 @@ async function extractUrlsFromSitemap(sitemapUrl: string, debugInfo: DebugInfo):
     const parser = new XMLParser({
       ignoreAttributes: false,
       parseAttributeValue: true,
+      trimValues: true,
+      parseTagValue: true,
+      stopNodes: ['**.loc'],
     })
-    const parsed = parser.parse(sitemapResponse.data)
+
+    let parsed;
+    try {
+      parsed = parser.parse(sitemapResponse.data)
+    } catch (parseError) {
+      debugInfo.parsingErrors.push(`Error parsing XML from ${sitemapUrl}: ${parseError instanceof Error ? parseError.message : String(parseError)}`)
+      return []
+    }
 
     if (parsed.urlset?.url) {
       // Standard sitemap format

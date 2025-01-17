@@ -20,10 +20,7 @@ export interface DebugInfo {
   networkErrors: string[];
   parsingErrors: string[];
   rateLimitingIssues: string[];
-  memoryUsage: {
-    heapUsed: number;
-    heapTotal: number;
-  };
+  memoryUsage: NodeJS.MemoryUsage;
   processingTime: number;
   stackTrace?: string;
   requestLogs: {
