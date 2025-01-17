@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { groupHistoryByDomain } from '@/utils/domainGrouping'
 import { DomainGroup } from '@/components/DomainGroup'
-import type { DomainGroup as DomainGroupType } from '@/utils/domainGrouping'
+import type { SearchHistoryItem, AnalysisResult } from '@/types/api'
 import { ScanSummary } from '@/components/ScanSummary'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { useSession } from 'next-auth/react'
@@ -13,81 +13,89 @@ import { Trash2, ExternalLink, ChevronDown, ChevronUp, Filter, X, Download, File
 import { exportToCSV, exportToJSON, exportToHTML, downloadFile } from '@/utils/export'
 import { generateScanCSV, generateScanJSON, generateScanHTML } from '@/utils/scanExport'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { ClientSessionCheck } from '@/components/ClientSessionCheck'
+import { toast } from '@/components/ui/toast'
 
-interface SearchHistoryItem {
-  id: string
-  sitemapUrl: string
-  searchDate: Date
-  status: string
-  results: string
-  parsedResults: any
-}
-
-interface ParsedResults {
-  error?: string
-  urlsAnalyzed?: number
-  issues?: number
-  details?: Array<{
-    url: string
-    title?: string
-    description?: string
-    ogImage?: string
-    brokenLinks?: string[]
-  }>
-}
-
-type SortField = 'date' | 'url' | 'status' | 'results'
+type SortField = 'date' | 'domain' | 'status'
 type SortOrder = 'asc' | 'desc'
 
 export default function HistoryPage() {
-  const { data: session, status } = useSession()
+  return (
+    <ClientSessionCheck>
+      <div className="container mx-auto px-4 py-8">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-4">Scan History</h1>
+          <p className="text-gray-600">View and manage your previous sitemap scans.</p>
+        </div>
+        <HistoryContent />
+      </div>
+    </ClientSessionCheck>
+  )
+}
+
+function HistoryContent() {
   const router = useRouter()
+  const { data: session } = useSession()
+  const [history, setHistory] = useState<SearchHistoryItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [domainGroups, setDomainGroups] = useState<DomainGroupType[]>([])
+  const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [sortField, setSortField] = useState<SortField>('date')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
-  const [selectedDomain, setSelectedDomain] = useState<string | null>(null)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
-  const [isExporting, setIsExporting] = useState(false)
-  const [exportingReport, setExportingReport] = useState<string | null>(null)
-  const [openExportMenu, setOpenExportMenu] = useState<string | null>(null)
-  const [history, setHistory] = useState<SearchHistoryItem[]>([])
+  const [selectedDomain, setSelectedDomain] = useState<string | null>(null)
 
   useEffect(() => {
-    if (status === 'unauthenticated') {
-      router.push('/login')
-    } else if (status === 'authenticated' && session?.user) {
-      fetchHistory()
-    }
-  }, [status, session])
+    const fetchHistory = async () => {
+      if (!session?.user?.email) return
 
-  const fetchHistory = async () => {
-    setIsLoading(true)
-    try {
-      const response = await fetch('/api/history')
-      const data = await response.json()
-      
-      // Convert date strings to Date objects and parse results
-      const historyWithDates = data.map((item: SearchHistoryItem) => ({
-        ...item,
-        searchDate: new Date(item.searchDate),
-        parsedResults: item.results ? JSON.parse(item.results) : null
-      }))
-      
-      setHistory(historyWithDates)
-      const grouped = groupHistoryByDomain(historyWithDates)
-      setDomainGroups(grouped)
-    } catch (error) {
-      console.error('Error fetching history:', error)
-    } finally {
-      setIsLoading(false)
+      try {
+        setError(null)
+        const response = await fetch('/api/history')
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(errorData.error || 'Failed to fetch history')
+        }
+
+        const { data } = await response.json()
+        if (!data) {
+          throw new Error('No data received from server')
+        }
+
+        const parsedHistory = data.map((item: SearchHistoryItem) => {
+          const parsedResults = typeof item.results === 'string' 
+            ? JSON.parse(item.results)
+            : item.results
+
+          return {
+            ...item,
+            searchDate: new Date(item.searchDate),
+            results: typeof item.results === 'string' ? item.results : JSON.stringify(item.results),
+            parsedResults: {
+              urlsAnalyzed: parsedResults.urlsAnalyzed || 0,
+              issues: parsedResults.issues || 0,
+              details: parsedResults.details || [],
+              error: parsedResults.error
+            } as AnalysisResult
+          }
+        })
+
+        setHistory(parsedHistory)
+      } catch (error) {
+        console.error('Error fetching history:', error)
+        setError(error instanceof Error ? error.message : 'An error occurred')
+      } finally {
+        setIsLoading(false)
+      }
     }
-  }
+
+    fetchHistory()
+  }, [session?.user?.email])
 
   const handleDelete = async (domain: string) => {
     try {
+      setError(null)
       const response = await fetch('/api/history/delete', {
         method: 'DELETE',
         headers: {
@@ -97,26 +105,134 @@ export default function HistoryPage() {
       })
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Failed to delete domain history')
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to delete history')
       }
 
-      // Refresh the history list
-      await fetchHistory()
+      // Refresh the history after successful deletion
+      const updatedHistory = history.filter(item => 
+        !item.sitemapUrl.includes(domain)
+      )
+      setHistory(updatedHistory)
+      setIsDeleteModalOpen(false)
     } catch (error) {
-      console.error('Error deleting domain history:', error)
+      console.error('Error deleting history:', error)
+      setError(error instanceof Error ? error.message : 'Failed to delete history')
     }
   }
 
-  // Filter domain groups based on search and status
-  const filteredGroups = domainGroups.filter(group => {
-    const matchesSearch = group.domain.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesStatus = statusFilter === 'all' || group.scans.some(scan => scan.status.toLowerCase() === statusFilter)
-    return matchesSearch && matchesStatus
-  })
+  const handleExport = (format: string) => {
+    const selectedGroup = filteredGroups.find(g => g.domain === selectedDomain)
+    if (!selectedGroup) return
+
+    const { scans } = selectedGroup
+    let content = ''
+    let filename = `sitemap-analysis-${selectedDomain}-${new Date().toISOString().split('T')[0]}`
+
+    try {
+      switch (format) {
+        case 'csv':
+          content = generateScanCSV({
+            sitemapUrl: selectedGroup.domain,
+            scanDate: scans[0].scanDate,
+            results: JSON.stringify(scans[0].stats)
+          })
+          filename += '.csv'
+          break
+        case 'json':
+          content = generateScanJSON({
+            sitemapUrl: selectedGroup.domain,
+            scanDate: scans[0].scanDate,
+            results: JSON.stringify(scans[0].stats)
+          })
+          filename += '.json'
+          break
+        case 'html':
+          content = generateScanHTML({
+            sitemapUrl: selectedGroup.domain,
+            scanDate: scans[0].scanDate,
+            results: JSON.stringify(scans[0].stats)
+          })
+          filename += '.html'
+          break
+        default:
+          throw new Error(`Unsupported format: ${format}`)
+      }
+
+      downloadFile(content, filename, format)
+    } catch (error) {
+      console.error(`Error exporting to ${format}:`, error)
+      toast(`Failed to export to ${format}. Please try again.`)
+    }
+  }
+
+  const handleExportAll = (format: string) => {
+    try {
+      let content = ''
+      let filename = `all-sitemap-analysis-${new Date().toISOString().split('T')[0]}`
+
+      const exportData = {
+        sitemapUrl: 'All Domains',
+        scanDate: new Date(),
+        results: JSON.stringify(filteredGroups.map(group => ({
+          domain: group.domain,
+          stats: group.latestScan.stats,
+          scanDate: group.latestScan.scanDate
+        })))
+      }
+
+      switch (format) {
+        case 'csv':
+          content = generateScanCSV(exportData)
+          filename += '.csv'
+          break
+        case 'json':
+          content = generateScanJSON(exportData)
+          filename += '.json'
+          break
+        case 'html':
+          content = generateScanHTML(exportData)
+          filename += '.html'
+          break
+        default:
+          throw new Error(`Unsupported format: ${format}`)
+      }
+
+      downloadFile(content, filename, format)
+    } catch (error) {
+      console.error(`Error exporting to ${format}:`, error)
+      toast(`Failed to export to ${format}. Please try again.`)
+    }
+  }
+
+  const groups = groupHistoryByDomain(history.map(item => {
+    const stringResults = typeof item.results === 'string' ? item.results : JSON.stringify(item.results)
+    const { parsedResults, ...rest } = item
+    return {
+      ...rest,
+      results: stringResults
+    }
+  }))
+  const filteredGroups = groups
+    .filter((group) => 
+      group.domain.toLowerCase().includes(searchQuery.toLowerCase()) &&
+      (statusFilter === 'all' || group.latestScan.status === statusFilter)
+    )
+    .sort((a, b) => {
+      if (sortField === 'domain') {
+        return sortOrder === 'asc' 
+          ? a.domain.localeCompare(b.domain)
+          : b.domain.localeCompare(a.domain)
+      } else if (sortField === 'date') {
+        return sortOrder === 'asc'
+          ? a.latestScan.scanDate.getTime() - b.latestScan.scanDate.getTime()
+          : b.latestScan.scanDate.getTime() - a.latestScan.scanDate.getTime()
+      }
+      return 0
+    })
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Analysis History</h1>
         <div className="flex items-center space-x-2">
@@ -150,34 +266,27 @@ export default function HistoryPage() {
         <>
           <div className="mb-8">
             <ScanSummary
-              history={history.map(item => {
-                // Safely parse and extract results
-                const results = item.parsedResults?.results || []
-                const issues = Array.isArray(results) ? results.reduce((sum, result) => {
-                  return sum + (result.issues?.length || 0)
-                }, 0) : 0
-
-                return {
-                  id: item.id,
-                  date: item.searchDate,
-                  status: item.status,
-                  urlsAnalyzed: Array.isArray(results) ? results.length : 0,
-                  issuesFound: issues
-                }
-              })}
+              history={history.map(item => ({
+                id: item.id,
+                date: item.searchDate,
+                status: item.status,
+                urlsAnalyzed: item.parsedResults.urlsAnalyzed,
+                issuesFound: item.parsedResults.issues
+              }))}
             />
           </div>
 
           <div className="grid gap-6">
             {filteredGroups.map((group) => (
-              <DomainGroup
-                key={group.domain}
-                group={group}
-                onDelete={async () => {
-                  setSelectedDomain(group.domain)
-                  setIsDeleteModalOpen(true)
-                }}
-              />
+              <div key={group.domain} className="mb-6">
+                <DomainGroup 
+                  group={group}
+                  onDelete={async () => {
+                    setSelectedDomain(group.domain)
+                    setIsDeleteModalOpen(true)
+                  }}
+                />
+              </div>
             ))}
           </div>
         </>
@@ -196,6 +305,6 @@ export default function HistoryPage() {
           message={`Are you sure you want to delete all scan history for ${selectedDomain}?`}
         />
       )}
-    </div>
+    </>
   )
 }

@@ -1,3 +1,5 @@
+'use client'
+
 import { type AnalysisResult } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Globe, CheckCircle, AlertCircle, AlertTriangle } from 'lucide-react'

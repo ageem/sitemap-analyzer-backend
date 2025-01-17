@@ -9,6 +9,10 @@ export function NavBar() {
   const { data: session, status } = useSession()
   const [isOpen, setIsOpen] = useState(false)
 
+  if (status === 'loading') {
+    return null
+  }
+
   return (
     <nav className="bg-white shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

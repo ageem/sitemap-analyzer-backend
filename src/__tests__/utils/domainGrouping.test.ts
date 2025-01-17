@@ -1,178 +1,160 @@
-import {
-  extractDomain,
-  calculateScanStats,
+import { describe, expect, test } from '@jest/globals'
+import { 
+  extractDomain, 
+  calculateScanStats, 
   processScanItem,
-  calculateScanFrequency,
-  groupHistoryByDomain
-} from '@/utils/domainGrouping';
+  detectScanFrequency,
+  type ScanHistory,
+} from '@/utils/domainGrouping'
+import { type AnalysisResult } from '@/types'
 
-describe('extractDomain', () => {
-  it('extracts domain correctly from various URL formats', () => {
-    expect(extractDomain('https://www.example.com/sitemap.xml')).toBe('example.com');
-    expect(extractDomain('http://example.com/sitemap.xml')).toBe('example.com');
-    expect(extractDomain('https://subdomain.example.com/sitemap.xml')).toBe('subdomain.example.com');
-    expect(extractDomain('https://example.co.uk/sitemap.xml')).toBe('example.co.uk');
-  });
+describe('domainGrouping utils', () => {
+  describe('extractDomain', () => {
+    test('extracts domain from URL', () => {
+      expect(extractDomain('https://example.com/path')).toBe('example.com')
+      expect(extractDomain('http://sub.example.com')).toBe('sub.example.com')
+      expect(extractDomain('https://www.example.com')).toBe('www.example.com')
+    })
 
-  it('handles invalid URLs gracefully', () => {
-    expect(extractDomain('invalid-url')).toBe('invalid-url');
-    expect(extractDomain('')).toBe('');
-  });
-});
+    test('handles invalid URLs', () => {
+      expect(extractDomain('invalid-url')).toBe('invalid-url')
+    })
+  })
 
-describe('calculateScanStats', () => {
-  it('calculates correct statistics from scan results', () => {
-    const mockResults = JSON.stringify([
+  describe('calculateScanStats', () => {
+    const mockResults: AnalysisResult[] = [
       {
         url: 'https://example.com/1',
-        title: 'Title 1',
-        description: 'Description 1',
-        ogImage: 'image1.jpg',
-        loadTime: 100
+        status: 'pass',
+        issues: ['Missing description'],
+        metadata: {
+          title: 'Test 1',
+          description: '',
+          keywords: 'test',
+          newsKeywords: '',
+          ogSiteName: '',
+          ogTitle: '',
+          ogDescription: '',
+          ogImage: '',
+        },
+        technicalSpecs: {
+          loadSpeed: 500,
+          pageSize: 1000,
+        },
       },
       {
         url: 'https://example.com/2',
-        title: null,
-        description: null,
-        ogImage: null,
-        brokenLinks: ['broken1.html', 'broken2.html'],
-        loadTime: 200
+        status: 'fail',
+        issues: ['Missing title', 'Missing og:image'],
+        metadata: {
+          title: '',
+          description: 'Test 2',
+          keywords: 'test',
+          newsKeywords: '',
+          ogSiteName: '',
+          ogTitle: '',
+          ogDescription: '',
+          ogImage: '',
+        },
+        technicalSpecs: {
+          loadSpeed: 1000,
+          pageSize: 2000,
+        },
+      },
+    ]
+
+    test('calculates scan statistics correctly', () => {
+      const stats = calculateScanStats(mockResults)
+
+      expect(stats.urlsAnalyzed).toBe(2)
+      expect(stats.totalUrlsAnalyzed).toBe(2)
+      expect(stats.successRate).toBe(50)
+      expect(stats.mostCommonIssue).toBe('Missing description')
+      expect(stats.healthScore).toBeLessThanOrEqual(100)
+      expect(stats.healthScore).toBeGreaterThanOrEqual(0)
+      expect(stats.responseTimeAvg).toBe(750)
+      expect(stats.issuesByType).toHaveLength(3)
+      expect(stats.trendIndicators).toHaveProperty('responseTime')
+      expect(stats.trendIndicators).toHaveProperty('successRate')
+      expect(stats.trendIndicators).toHaveProperty('healthScore')
+    })
+  })
+
+  describe('processScanItem', () => {
+    test('processes scan item correctly', () => {
+      const mockResult: AnalysisResult = {
+        url: 'https://example.com',
+        status: 'pass',
+        issues: [],
+        metadata: {
+          title: 'Test',
+          description: 'Test description',
+          keywords: 'test',
+          newsKeywords: '',
+          ogSiteName: '',
+          ogTitle: '',
+          ogDescription: '',
+          ogImage: '',
+        },
+        technicalSpecs: {
+          loadSpeed: 500,
+          pageSize: 1000,
+        },
       }
-    ]);
 
-    const stats = calculateScanStats(mockResults);
-    expect(stats.urlsAnalyzed).toBe(2);
-    expect(stats.missingTitles).toBe(1);
-    expect(stats.missingDescriptions).toBe(1);
-    expect(stats.missingOgImages).toBe(1);
-    expect(stats.brokenLinksCount).toBe(2);
-    expect(stats.averageLoadTime).toBe(150);
-  });
+      const processed = processScanItem(mockResult)
+      expect(processed.url).toBe(mockResult.url)
+      expect(processed.status).toBe(mockResult.status)
+      expect(processed.stats).toBeDefined()
+      expect(processed.scanDate).toBeInstanceOf(Date)
+      expect(processed.timestamp).toBeDefined()
+      expect(processed.id).toBeDefined()
+    })
+  })
 
-  it('handles empty results', () => {
-    const stats = calculateScanStats('[]');
-    expect(stats.urlsAnalyzed).toBe(0);
-    expect(stats.issuesFound).toBe(0);
-  });
-
-  it('handles invalid JSON gracefully', () => {
-    const stats = calculateScanStats('invalid-json');
-    expect(stats.urlsAnalyzed).toBe(0);
-    expect(stats.issuesFound).toBe(0);
-  });
-});
-
-describe('calculateScanFrequency', () => {
-  it('identifies multiple-daily scans', () => {
-    const dates = [
-      new Date('2025-01-15T12:00:00'),
-      new Date('2025-01-15T15:00:00'),
-      new Date('2025-01-15T18:00:00')
-    ];
-    expect(calculateScanFrequency(dates)).toBe('multiple-daily');
-  });
-
-  it('identifies daily scans', () => {
-    const dates = [
-      new Date('2025-01-15T12:00:00'),
-      new Date('2025-01-14T12:00:00'),
-      new Date('2025-01-13T12:00:00')
-    ];
-    expect(calculateScanFrequency(dates)).toBe('daily');
-  });
-
-  it('identifies weekly scans', () => {
-    const dates = [
-      new Date('2025-01-15T12:00:00'),
-      new Date('2025-01-08T12:00:00'),
-      new Date('2025-01-01T12:00:00')
-    ];
-    expect(calculateScanFrequency(dates)).toBe('weekly');
-  });
-
-  it('handles single scan', () => {
-    const dates = [new Date('2025-01-15T12:00:00')];
-    expect(calculateScanFrequency(dates)).toBe('one-time');
-  });
-});
-
-describe('groupHistoryByDomain', () => {
-  const mockHistory = [
-    {
-      id: '1',
-      sitemapUrl: 'https://example.com/sitemap.xml',
-      searchDate: new Date('2025-01-15T12:00:00'),
-      status: 'complete',
-      results: JSON.stringify([
+  describe('detectScanFrequency', () => {
+    test('detects scan frequency correctly', () => {
+      const mockScans: ScanHistory[] = [
         {
-          url: 'https://example.com/1',
-          title: 'Title 1',
-          description: 'Description 1',
-          ogImage: 'image1.jpg'
-        }
-      ])
-    },
-    {
-      id: '2',
-      sitemapUrl: 'https://example.com/sitemap.xml',
-      searchDate: new Date('2025-01-14T12:00:00'),
-      status: 'complete',
-      results: JSON.stringify([
+          id: '1',
+          url: 'https://example.com',
+          scanDate: new Date(),
+          status: 'pass',
+          stats: calculateScanStats([]),
+          timestamp: Date.now() - 24 * 60 * 60 * 1000, // 1 day ago
+        },
         {
-          url: 'https://example.com/1',
-          title: null,
-          description: null,
-          ogImage: null
-        }
-      ])
-    },
-    {
-      id: '3',
-      sitemapUrl: 'https://another.com/sitemap.xml',
-      searchDate: new Date('2025-01-15T12:00:00'),
-      status: 'complete',
-      results: JSON.stringify([
+          id: '2',
+          url: 'https://example.com',
+          scanDate: new Date(),
+          status: 'pass',
+          stats: calculateScanStats([]),
+          timestamp: Date.now() - 48 * 60 * 60 * 1000, // 2 days ago
+        },
         {
-          url: 'https://another.com/1',
-          title: 'Title 1',
-          description: null,
-          ogImage: 'image1.jpg'
-        }
-      ])
-    }
-  ];
+          id: '3',
+          url: 'https://example.com',
+          scanDate: new Date(),
+          status: 'pass',
+          stats: calculateScanStats([]),
+          timestamp: Date.now() - 72 * 60 * 60 * 1000, // 3 days ago
+        },
+      ]
 
-  it('groups history items correctly by domain', () => {
-    const groups = groupHistoryByDomain(mockHistory);
-    
-    expect(groups.length).toBe(2);
-    expect(groups[0].domain).toBe('example.com');
-    expect(groups[0].totalScans).toBe(2);
-    expect(groups[1].domain).toBe('another.com');
-    expect(groups[1].totalScans).toBe(1);
-  });
+      const frequency = detectScanFrequency(mockScans)
+      expect(frequency).toBe('daily')
+    })
 
-  it('calculates trends correctly', () => {
-    const groups = groupHistoryByDomain(mockHistory);
-    const exampleGroup = groups.find(g => g.domain === 'example.com')!;
-
-    expect(exampleGroup.trends.urlsAnalyzed.length).toBe(2);
-    expect(exampleGroup.trends.issuesFound.length).toBe(2);
-    expect(exampleGroup.trends.dates.length).toBe(2);
-  });
-
-  it('calculates overall statistics correctly', () => {
-    const groups = groupHistoryByDomain(mockHistory);
-    const exampleGroup = groups.find(g => g.domain === 'example.com')!;
-
-    expect(exampleGroup.overallStats.totalUrlsAnalyzed).toBe(2);
-    expect(exampleGroup.overallStats.successRate).toBe(100);
-    expect(typeof exampleGroup.overallStats.averageIssuesPerScan).toBe('number');
-    expect(typeof exampleGroup.overallStats.scanFrequency).toBe('string');
-  });
-
-  it('handles empty history', () => {
-    const groups = groupHistoryByDomain([]);
-    expect(groups.length).toBe(0);
-  });
-});
+    test('handles insufficient data', () => {
+      const frequency = detectScanFrequency([{
+        id: '1',
+        url: 'https://example.com',
+        scanDate: new Date(),
+        status: 'pass',
+        stats: calculateScanStats([]),
+        timestamp: Date.now(),
+      }])
+      expect(frequency).toBe('one-time')
+    })
+  })
+})

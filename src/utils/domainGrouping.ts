@@ -1,4 +1,27 @@
-interface SearchHistoryItem {
+import { AnalysisResult } from '@/types'
+
+export interface ScanStats {
+  urlsAnalyzed: number;
+  totalUrlsAnalyzed: number;
+  successRate: number;
+  scanFrequency: string;
+  mostCommonIssue: string;
+  healthScore: number;
+  responseTimeAvg: number;
+  lastScanDuration: number;
+  issuesByType: {
+    type: string;
+    count: number;
+    percentage: number;
+  }[];
+  trendIndicators: {
+    responseTime: 'improving' | 'stable' | 'degrading';
+    successRate: 'improving' | 'stable' | 'degrading';
+    healthScore: 'improving' | 'stable' | 'degrading';
+  };
+}
+
+export interface SearchHistoryItem {
   id: string;
   sitemapUrl: string;
   searchDate: Date;
@@ -6,33 +29,13 @@ interface SearchHistoryItem {
   results: string;
 }
 
-interface UrlAnalysis {
+export interface ScanHistory {
+  id: string;
   url: string;
-  title?: string;
-  description?: string;
-  ogImage?: string;
-  brokenLinks?: string[];
-  statusCode?: number;
-  loadTime?: number;
-}
-
-interface ScanStats {
-  urlsAnalyzed: number
-  issuesFound: number
-  averageResponseTime: number
-  scanDuration: number
-  issueTypes?: {
-    type: string
-    count: number
-  }[]
-}
-
-interface ScanHistory {
-  id: string
-  stats: ScanStats
-  url: string
-  scanDate: string
-  status: 'complete' | 'error' | 'pending'
+  scanDate: Date;
+  status: string;
+  stats: ScanStats;
+  timestamp: number;
 }
 
 export interface DomainGroup {
@@ -54,9 +57,9 @@ export interface DomainGroup {
       percentage: number
     }[]
     trendIndicators: {
-      urlGrowth: number
-      issueReduction: number
-      healthScoreChange: number
+      responseTime: 'improving' | 'stable' | 'degrading'
+      successRate: 'improving' | 'stable' | 'degrading'
+      healthScore: 'improving' | 'stable' | 'degrading'
     }
   }
   trends: {
@@ -70,7 +73,7 @@ export interface DomainGroup {
  * Extracts domain from a URL string
  * Handles various URL formats and removes www if present
  */
-function extractDomain(url: string): string {
+export function extractDomain(url: string): string {
   try {
     const urlObj = new URL(url)
     return urlObj.hostname
@@ -82,167 +85,89 @@ function extractDomain(url: string): string {
 /**
  * Calculates statistics for a single scan
  */
-function calculateScanStats(results: string): ScanStats {
-  try {
-    const parsedResults = JSON.parse(results);
-    
-    // Handle the case where results is an error object
-    if (parsedResults.error) {
-      return {
-        urlsAnalyzed: 0,
-        issuesFound: 0,
-        averageResponseTime: 0,
-        scanDuration: 0,
-        issueTypes: []
-      };
-    }
+export function calculateScanStats(results: AnalysisResult[]): ScanStats {
+  const totalUrls = results.length
+  const successfulScans = results.filter(r => r.status === 'pass').length
+  const successRate = (successfulScans / totalUrls) * 100
 
-    // Handle array of results
-    const resultsArray = Array.isArray(parsedResults) ? parsedResults : [parsedResults];
-    
-    const stats: ScanStats = {
-      urlsAnalyzed: resultsArray.length,
-      issuesFound: 0,
-      averageResponseTime: 0,
-      scanDuration: 0,
-      issueTypes: []
-    };
-
-    let totalResponseTime = 0;
-    const issueTypeCounts: { [key: string]: number } = {};
-
-    resultsArray.forEach(result => {
-      // Count issues
-      if (result.issues && Array.isArray(result.issues)) {
-        stats.issuesFound += result.issues.length;
-        
-        // Count issue types
-        result.issues.forEach((issue: string) => {
-          issueTypeCounts[issue] = (issueTypeCounts[issue] || 0) + 1;
-        });
-      }
-
-      // Calculate average response time
-      if (result.technicalSpecs?.loadSpeed) {
-        totalResponseTime += result.technicalSpecs.loadSpeed;
-      }
-    });
-
-    // Calculate average response time
-    if (stats.urlsAnalyzed > 0) {
-      stats.averageResponseTime = Math.round(totalResponseTime / stats.urlsAnalyzed);
-    }
-
-    // Convert issue type counts to array format
-    stats.issueTypes = Object.entries(issueTypeCounts).map(([type, count]) => ({
-      type,
-      count
-    }));
-
-    return stats;
-  } catch (error) {
-    console.error('Error calculating scan stats:', error);
-    return {
-      urlsAnalyzed: 0,
-      issuesFound: 0,
-      averageResponseTime: 0,
-      scanDuration: 0,
-      issueTypes: []
-    };
-  }
-}
-
-/**
- * Processes a scan item into the DomainScan format
- */
-function processScanItem(item: SearchHistoryItem): ScanHistory {
-  return {
-    id: item.id,
-    url: item.sitemapUrl,
-    scanDate: item.searchDate.toISOString(),
-    status: item.status as 'complete' | 'error' | 'pending',
-    stats: calculateScanStats(item.results)
-  };
-}
-
-/**
- * Calculates health score for a group of scans
- */
-function calculateHealthScore(scans: ScanHistory[]): number {
-  if (scans.length === 0) return 0
-
-  const latestScan = scans[0]
-  const successRate = (latestScan.stats.urlsAnalyzed - latestScan.stats.issuesFound) / latestScan.stats.urlsAnalyzed * 100
-  const responseTimeScore = Math.min(100, (2000 - (latestScan.stats.averageResponseTime || 0)) / 15)
-  const issueReductionScore = scans.length > 1 
-    ? Math.min(100, ((scans[1].stats.issuesFound - latestScan.stats.issuesFound) / scans[1].stats.issuesFound) * 100)
-    : 100
-
-  return Math.round((successRate * 0.5) + (responseTimeScore * 0.3) + (issueReductionScore * 0.2))
-}
-
-/**
- * Calculates trend indicators for a group of scans
- */
-function calculateTrendIndicators(scans: ScanHistory[]): { urlGrowth: number; issueReduction: number; healthScoreChange: number } {
-  if (scans.length < 2) {
-    return { urlGrowth: 0, issueReduction: 0, healthScoreChange: 0 }
-  }
-
-  const latest = scans[0]
-  const previous = scans[1]
-
-  const urlGrowth = ((latest.stats.urlsAnalyzed - previous.stats.urlsAnalyzed) / previous.stats.urlsAnalyzed) * 100
-  const issueReduction = ((previous.stats.issuesFound - latest.stats.issuesFound) / previous.stats.issuesFound) * 100
-  const healthScoreChange = calculateHealthScore([latest]) - calculateHealthScore([previous])
-
-  return {
-    urlGrowth: Math.round(urlGrowth),
-    issueReduction: Math.round(issueReduction),
-    healthScoreChange: Math.round(healthScoreChange)
-  }
-}
-
-/**
- * Calculates issues by type for a group of scans
- */
-function calculateIssuesByType(scans: ScanHistory[]): { type: string; count: number; percentage: number }[] {
-  const issueTypes: { [key: string]: number } = {}
-  let totalIssues = 0
-
-  scans.forEach(scan => {
-    scan.stats.issueTypes?.forEach(issue => {
-      issueTypes[issue.type] = (issueTypes[issue.type] || 0) + issue.count
-      totalIssues += issue.count
-    })
+  // Collect all issues
+  const allIssues = results.flatMap(r => r.issues)
+  const issueCount: { [key: string]: number } = {}
+  allIssues.forEach(issue => {
+    issueCount[issue] = (issueCount[issue] || 0) + 1
   })
 
-  return Object.entries(issueTypes).map(([type, count]) => ({
+  // Find most common issue
+  const mostCommonIssue = Object.entries(issueCount)
+    .sort(([, a], [, b]) => b - a)[0]?.[0] || 'None'
+
+  // Calculate average response time
+  const totalResponseTime = results.reduce((sum, r) => sum + r.technicalSpecs.loadSpeed, 0)
+  const responseTimeAvg = totalResponseTime / totalUrls
+
+  // Calculate health score (0-100)
+  const healthScore = Math.round((successRate * 0.6) + 
+    (Math.min(1000, responseTimeAvg) / 1000 * 40))
+
+  // Calculate issues by type
+  const issuesByType = Object.entries(issueCount).map(([type, count]) => ({
     type,
     count,
-    percentage: Math.round((count / totalIssues) * 100)
-  })).sort((a, b) => b.count - a.count)
+    percentage: (count / totalUrls) * 100
+  }))
+
+  return {
+    urlsAnalyzed: totalUrls,
+    totalUrlsAnalyzed: totalUrls,
+    successRate,
+    scanFrequency: 'daily', // This could be calculated based on historical data
+    mostCommonIssue,
+    healthScore,
+    responseTimeAvg,
+    lastScanDuration: Date.now(), // This should be passed in from the scan
+    issuesByType,
+    trendIndicators: {
+      responseTime: 'stable',
+      successRate: 'stable',
+      healthScore: 'stable'
+    }
+  }
+}
+
+/**
+ * Processes a scan item into the ScanHistory format
+ */
+export function processScanItem(result: AnalysisResult): ScanHistory {
+  return {
+    id: crypto.randomUUID(),
+    url: result.url,
+    scanDate: new Date(),
+    status: result.status,
+    stats: calculateScanStats([result]),
+    timestamp: Date.now()
+  }
 }
 
 /**
  * Detects scan frequency for a group of scans
  */
-function detectScanFrequency(scans: ScanHistory[]): string {
+export function detectScanFrequency(scans: ScanHistory[]): string {
   if (scans.length < 2) return 'one-time'
 
   const intervals: number[] = []
-  for (let i = 1; i < scans.length; i++) {
-    const diff = new Date(scans[i-1].scanDate).getTime() - new Date(scans[i].scanDate).getTime()
-    intervals.push(diff)
+  const sortedScans = [...scans].sort((a, b) => b.timestamp - a.timestamp)
+
+  for (let i = 1; i < sortedScans.length; i++) {
+    intervals.push(sortedScans[i - 1].timestamp - sortedScans[i].timestamp)
   }
 
-  const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length
-  const dayInMs = 24 * 60 * 60 * 1000
+  const avgInterval = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length
+  const avgIntervalHours = avgInterval / (1000 * 60 * 60)
 
-  if (avgInterval <= dayInMs * 1.5) return 'daily'
-  if (avgInterval <= dayInMs * 7.5) return 'weekly'
-  if (avgInterval <= dayInMs * 32) return 'monthly'
-  return 'irregular'
+  if (avgIntervalHours <= 1) return 'hourly'
+  if (avgIntervalHours <= 24) return 'daily'
+  if (avgIntervalHours <= 168) return 'weekly'
+  return 'monthly'
 }
 
 /**
@@ -267,28 +192,51 @@ export function groupHistoryByDomain(historyItems: SearchHistoryItem[]): DomainG
     );
 
     // Process each scan
-    const scans = sortedItems.map(processScanItem);
+    const scans = sortedItems.map(item => processScanItem(JSON.parse(item.results) as AnalysisResult));
     
     // Calculate trends
     const trends = {
-      dates: scans.map(scan => scan.scanDate).reverse(),
+      dates: scans.map(scan => scan.scanDate.toISOString()).reverse(),
       urlsAnalyzed: scans.map(scan => scan.stats.urlsAnalyzed).reverse(),
-      issuesFound: scans.map(scan => scan.stats.issuesFound).reverse()
+      issuesFound: scans.map(scan => scan.stats.issuesByType.reduce((sum, issue) => sum + issue.count, 0)).reverse()
     };
 
     // Calculate overall statistics
     const totalUrlsAnalyzed = scans.reduce((sum, scan) => sum + scan.stats.urlsAnalyzed, 0);
     const successRate = Math.round(
-      (scans.reduce((sum, scan) => sum + (scan.stats.urlsAnalyzed - scan.stats.issuesFound), 0) / totalUrlsAnalyzed) * 100
+      (scans.reduce((sum, scan) => sum + (scan.stats.successRate), 0) / scans.length)
     );
 
-    // Find most common issue type
-    const issueTypes = calculateIssuesByType(scans);
-    const mostCommonIssue = issueTypes[0]?.type || 'None';
+    // Find most common issue
+    const issueTypes = scans.flatMap(scan => scan.stats.issuesByType);
+    const mostCommonIssue = issueTypes.reduce((max, issue) => issue.count > max.count ? issue : max, issueTypes[0]).type;
+
+    // Calculate trend indicators
+    const calculateTrend = (current: number, previous: number): 'improving' | 'stable' | 'degrading' => {
+      const percentChange = ((current - previous) / previous) * 100;
+      if (percentChange > 5) return 'improving';
+      if (percentChange < -5) return 'degrading';
+      return 'stable';
+    };
+
+    const trendIndicators = {
+      responseTime: calculateTrend(
+        scans[0].stats.responseTimeAvg,
+        scans[1]?.stats.responseTimeAvg || scans[0].stats.responseTimeAvg
+      ),
+      successRate: calculateTrend(
+        scans[0].stats.successRate,
+        scans[1]?.stats.successRate || scans[0].stats.successRate
+      ),
+      healthScore: calculateTrend(
+        scans[0].stats.healthScore,
+        scans[1]?.stats.healthScore || scans[0].stats.healthScore
+      )
+    };
 
     return {
       domain,
-      totalScans: items.length,
+      totalScans: scans.length,
       scans,
       latestScan: scans[0],
       overallStats: {
@@ -296,13 +244,11 @@ export function groupHistoryByDomain(historyItems: SearchHistoryItem[]): DomainG
         successRate,
         scanFrequency: detectScanFrequency(scans),
         mostCommonIssue,
-        healthScore: calculateHealthScore(scans),
-        responseTimeAvg: Math.round(
-          scans.reduce((sum, scan) => sum + (scan.stats.averageResponseTime || 0), 0) / scans.length
-        ),
-        lastScanDuration: Math.round((scans[0].stats.scanDuration || 0) / 1000),
+        healthScore: Math.round(scans.reduce((sum, scan) => sum + scan.stats.healthScore, 0) / scans.length),
+        responseTimeAvg: Math.round(scans.reduce((sum, scan) => sum + scan.stats.responseTimeAvg, 0) / scans.length),
+        lastScanDuration: Math.round(scans[0].stats.lastScanDuration / 1000),
         issuesByType: issueTypes,
-        trendIndicators: calculateTrendIndicators(scans)
+        trendIndicators
       },
       trends
     };

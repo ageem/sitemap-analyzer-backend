@@ -1,12 +1,12 @@
-import { NextAuthOptions } from "next-auth";
+import { NextAuthOptions, User } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { prisma } from "@/lib/db";
 
-export interface CustomUser {
+export interface CustomUser extends User {
   id: string;
   email: string;
-  name?: string | null;
+  name?: string;
 }
 
 interface Credentials {
@@ -35,7 +35,7 @@ export const authOptions: NextAuthOptions = {
         },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials: Credentials | undefined): Promise<CustomUser | null> {
+      async authorize(credentials, req): Promise<User | null> {
         if (!credentials?.email || !credentials.password) {
           return null;
         }
@@ -65,7 +65,7 @@ export const authOptions: NextAuthOptions = {
           return {
             id: user.id,
             email: user.email,
-            name: user.name,
+            name: user.name || undefined,
           };
         } catch (error) {
           console.error('Auth error:', error);

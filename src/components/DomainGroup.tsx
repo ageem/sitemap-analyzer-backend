@@ -1,122 +1,88 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
-import { ChevronDownIcon, TrashIcon } from '@heroicons/react/24/solid'
-import type { DomainGroup as DomainGroupType } from '@/utils/domainGrouping'
-import { DomainTrends } from './DomainTrends'
-import { DomainAnalytics } from './DomainAnalytics'
-import { ConfirmDialog } from './ConfirmDialog'
+import React, { useState, useRef, useEffect } from 'react';
+import { type DomainGroup as DomainGroupType } from '@/utils/domainGrouping';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { ConfirmDialog } from './ConfirmDialog';
 
 interface DomainGroupProps {
-  group: DomainGroupType
-  onDelete?: () => Promise<void>
+  group: DomainGroupType;
+  onDelete?: () => Promise<void>;
 }
 
 export function DomainGroup({ group, onDelete }: DomainGroupProps) {
-  const [isExpanded, setIsExpanded] = useState(false)
-  const [contentHeight, setContentHeight] = useState(0)
-  const [isDeleting, setIsDeleting] = useState(false)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const contentRef = useRef<HTMLDivElement>(null)
+  const { domain, totalScans, scans, latestScan, overallStats, trends } = group;
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [contentHeight, setContentHeight] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  const chartData = trends.dates.map((date, i) => ({
+    date,
+    urlsAnalyzed: trends.urlsAnalyzed[i],
+    issueCount: scans[i].stats.issuesByType.reduce((sum, issue) => sum + issue.count, 0),
+  }));
 
   useEffect(() => {
     if (contentRef.current) {
-      setContentHeight(contentRef.current.scrollHeight)
+      setContentHeight(contentRef.current.scrollHeight);
     }
-  }, [isExpanded, group])
+  }, [isExpanded]);
 
-  const handleDelete = async (event: React.MouseEvent) => {
-    event.stopPropagation() // Prevent expanding the group when clicking delete
-    setShowDeleteConfirm(true)
-  }
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowDeleteConfirm(true);
+  };
 
   const confirmDelete = async () => {
-    if (!onDelete) return
-    
-    setIsDeleting(true)
+    setIsDeleting(true);
     try {
-      await onDelete()
-      setShowDeleteConfirm(false)
-    } catch (error) {
-      console.error('Error deleting domain:', error)
+      await onDelete?.();
     } finally {
-      setIsDeleting(false)
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
     }
-  }
-
-  const latestStats = group.latestScan?.stats
-  const successRate = Math.round(group.overallStats?.successRate)
+  };
 
   return (
     <>
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-4 overflow-hidden">
-        <div 
-          className="p-4 cursor-pointer hover:bg-gray-50 transition-colors duration-200"
-          onClick={() => setIsExpanded(!isExpanded)}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <h3 className="text-lg font-semibold text-gray-900">
-                {group.domain}
-              </h3>
-              <span className="text-sm text-gray-500">
-                {group.totalScans} scan{group.totalScans !== 1 ? 's' : ''}
-              </span>
-            </div>
-            <div className="flex items-center space-x-2">
-              {onDelete && (
-                <button
-                  onClick={handleDelete}
-                  disabled={isDeleting}
-                  className="p-1 text-gray-400 hover:text-red-600 transition-colors duration-200"
-                  title="Delete all scans for this domain"
-                >
-                  <TrashIcon className="h-5 w-5" />
-                </button>
-              )}
-              <button 
-                className="text-gray-400 hover:text-gray-600 transition-transform duration-200"
-                aria-expanded={isExpanded}
-              >
-                <div className={`transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>
-                  <ChevronDownIcon className="h-5 w-5" />
-                </div>
-              </button>
-            </div>
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div className="flex justify-between items-start mb-6">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-800">{domain}</h2>
+            <p className="text-gray-600">Total Scans: {totalScans}</p>
           </div>
-
-          {/* Latest scan summary */}
-          <div className="mt-2 grid grid-cols-1 sm:grid-cols-4 gap-4">
-            <div>
-              <p className="text-sm font-medium text-gray-500">Latest Scan</p>
-              <p className="mt-1 text-sm text-gray-900">
-                {group.latestScan?.scanDate ? new Date(group.latestScan.scanDate).toLocaleDateString() : 'N/A'}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-500">URLs Analyzed</p>
-              <p className="mt-1 text-sm text-gray-900">{latestStats?.urlsAnalyzed || 0}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-500">Issues Found</p>
-              <p className="mt-1 text-sm text-gray-900">{latestStats?.issuesFound || 0}</p>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-500">Success Rate</p>
-              <div className="mt-1 flex items-center">
-                <div className="flex-1 h-2 rounded-full bg-gray-200 overflow-hidden">
-                  <div 
-                    className={`h-2 rounded-full transition-all duration-500 ease-out ${
-                      successRate >= 90 ? 'bg-green-500' :
-                      successRate >= 70 ? 'bg-yellow-500' :
-                      'bg-red-500'
-                    }`}
-                    style={{ width: `${successRate}%`, transition: 'width 0.5s ease-out' }}
-                  />
-                </div>
-                <span className="ml-2 text-sm text-gray-900">{successRate}%</span>
+          <div className="text-right">
+            <p className="text-sm text-gray-500">
+              Last Scan: {new Date(latestScan.scanDate).toLocaleDateString()}
+            </p>
+            <p className="text-sm text-gray-500">
+              Duration: {overallStats.lastScanDuration}s
+            </p>
+            {onDelete && (
+              <button
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="p-1 text-gray-400 hover:text-red-600 transition-colors duration-200"
+                title="Delete all scans for this domain"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h3.382l-.76 3.84A2 2 0 0111 16V6a1 1 0 00-.553-.894L9 2zm5 14.5a1 1 0 00-1.106.553L13.382 16h-3.382l-.76-3.84A2 2 0 0111 12V6a1 1 0 012 0v6a2 2 0 001 2h3.382l.76 3.84A2 2 0 0116 16V6a1 1 0 001.106.553L15 2z" clipRule="evenodd" />
+                </svg>
+              </button>
+            )}
+            <button 
+              className="text-gray-400 hover:text-gray-600 transition-transform duration-200"
+              aria-expanded={isExpanded}
+              onClick={() => setIsExpanded(!isExpanded)}
+            >
+              <div className={`transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
               </div>
-            </div>
+            </button>
           </div>
         </div>
 
@@ -127,102 +93,106 @@ export function DomainGroup({ group, onDelete }: DomainGroupProps) {
           }`}
           style={{ maxHeight: isExpanded ? contentHeight : 0 }}
         >
-          <div className="p-4 border-t border-gray-200">
-            {/* Content sections */}
-            <div className="space-y-6">
-              <div className="space-y-6">
-                {/* Domain Analytics */}
-                <div className="pb-4 border-b border-gray-200">
-                  <h4 className="text-sm font-medium text-gray-900 mb-2">Domain Analytics</h4>
-                  <DomainAnalytics stats={{
-                    totalScans: group.totalScans,
-                    totalUrlsAnalyzed: group.overallStats?.totalUrlsAnalyzed || 0,
-                    totalIssuesFound: group.scans.reduce((sum, scan) => sum + scan.stats.issuesFound, 0),
-                    averageIssuesPerScan: Math.round(
-                      group.scans.reduce((sum, scan) => sum + scan.stats.issuesFound, 0) / group.totalScans
-                    ),
-                    successRate: group.overallStats?.successRate || 0,
-                    scanFrequency: group.overallStats?.scanFrequency || '',
-                    mostCommonIssue: group.overallStats?.mostCommonIssue || '',
-                    healthScore: group.overallStats?.healthScore || 0,
-                    responseTimeAvg: group.overallStats?.responseTimeAvg || 0,
-                    lastScanDuration: group.overallStats?.lastScanDuration || 0,
-                    issuesByType: group.overallStats?.issuesByType || [],
-                    trendIndicators: group.overallStats?.trendIndicators || []
-                  }} />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <h3 className="text-lg font-semibold text-blue-800">Health Score</h3>
+              <p className="text-3xl font-bold text-blue-600">
+                {overallStats.healthScore}%
+              </p>
+              <p className="text-sm text-blue-700">
+                {overallStats.trendIndicators.healthScore === 'improving'
+                  ? '↑ Improving'
+                  : overallStats.trendIndicators.healthScore === 'degrading'
+                  ? '↓ Degrading'
+                  : '→ Stable'}
+              </p>
+            </div>
+
+            <div className="bg-green-50 p-4 rounded-lg">
+              <h3 className="text-lg font-semibold text-green-800">Success Rate</h3>
+              <p className="text-3xl font-bold text-green-600">
+                {overallStats.successRate.toFixed(1)}%
+              </p>
+              <p className="text-sm text-green-700">
+                {overallStats.trendIndicators.successRate === 'improving'
+                  ? '↑ Improving'
+                  : overallStats.trendIndicators.successRate === 'degrading'
+                  ? '↓ Degrading'
+                  : '→ Stable'}
+              </p>
+            </div>
+
+            <div className="bg-purple-50 p-4 rounded-lg">
+              <h3 className="text-lg font-semibold text-purple-800">Response Time</h3>
+              <p className="text-3xl font-bold text-purple-600">
+                {overallStats.responseTimeAvg}ms
+              </p>
+              <p className="text-sm text-purple-700">
+                {overallStats.trendIndicators.responseTime === 'improving'
+                  ? '↑ Improving'
+                  : overallStats.trendIndicators.responseTime === 'degrading'
+                  ? '↓ Degrading'
+                  : '→ Stable'}
+              </p>
+            </div>
+
+            <div className="bg-orange-50 p-4 rounded-lg">
+              <h3 className="text-lg font-semibold text-orange-800">URLs Analyzed</h3>
+              <p className="text-3xl font-bold text-orange-600">
+                {overallStats.totalUrlsAnalyzed}
+              </p>
+              <p className="text-sm text-orange-700">
+                {overallStats.scanFrequency} scans
+              </p>
+            </div>
+          </div>
+
+          <div className="mb-6">
+            <h3 className="text-xl font-semibold text-gray-800 mb-4">Issues by Type</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {overallStats.issuesByType.map((issue, index) => (
+                <div
+                  key={index}
+                  className="bg-gray-50 p-4 rounded-lg"
+                >
+                  <h4 className="font-medium text-gray-800">{issue.type}</h4>
+                  <p className="text-2xl font-bold text-gray-900">{issue.count}</p>
+                  <p className="text-sm text-gray-600">
+                    {issue.percentage.toFixed(1)}% of URLs
+                  </p>
                 </div>
+              ))}
+            </div>
+          </div>
 
-                {/* Trend Graph */}
-                {group.scans.length > 1 && (
-                  <div className="pb-4 border-b border-gray-200">
-                    <h4 className="text-sm font-medium text-gray-900 mb-2">Trend Analysis</h4>
-                    <DomainTrends
-                      urlsAnalyzed={group.trends?.urlsAnalyzed || []}
-                      issuesFound={group.trends?.issuesFound || []}
-                      dates={group.trends?.dates || []}
-                    />
-                  </div>
-                )}
-
-                {/* Scan History */}
-                {isExpanded && (
-                  <div className="mt-4">
-                    <div className="overflow-hidden rounded-lg border border-gray-200">
-                      <div className="px-4 py-5 sm:p-6">
-                        <div className="grid grid-cols-1 gap-6">
-                          <div>
-                            <h4 className="text-lg font-medium">Scan History</h4>
-                            <div className="mt-3 max-h-64 overflow-y-auto">
-                              <table className="min-w-full divide-y divide-gray-200">
-                                <thead className="bg-gray-50 sticky top-0">
-                                  <tr>
-                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                      Date
-                                    </th>
-                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                      Status
-                                    </th>
-                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                      URLs Analyzed
-                                    </th>
-                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                      Issues Found
-                                    </th>
-                                  </tr>
-                                </thead>
-                                <tbody className="bg-white divide-y divide-gray-200">
-                                  {group.scans.map((scan) => (
-                                    <tr key={scan.id}>
-                                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {scan.scanDate ? new Date(scan.scanDate).toLocaleString() : 'N/A'}
-                                      </td>
-                                      <td className="px-6 py-4 whitespace-nowrap">
-                                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                                          scan.status === 'complete' 
-                                            ? 'bg-green-100 text-green-800'
-                                            : 'bg-yellow-100 text-yellow-800'
-                                        }`}>
-                                          {scan.status}
-                                        </span>
-                                      </td>
-                                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {scan.stats.urlsAnalyzed}
-                                      </td>
-                                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {scan.stats.issuesFound}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+          <div>
+            <h3 className="text-xl font-semibold text-gray-800 mb-4">Trends</h3>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(date) => new Date(date).toLocaleDateString()}
+                  />
+                  <YAxis />
+                  <Tooltip
+                    labelFormatter={(date) => new Date(date).toLocaleDateString()}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="urlsAnalyzed"
+                    stroke="#4F46E5"
+                    name="URLs Analyzed"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="issueCount"
+                    stroke="#EF4444"
+                    name="Issues Found"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </div>
         </div>
@@ -233,8 +203,8 @@ export function DomainGroup({ group, onDelete }: DomainGroupProps) {
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={confirmDelete}
         title="Delete Domain History"
-        message={`Are you sure you want to delete all scan history for ${group.domain}? This action cannot be undone.`}
+        message={`Are you sure you want to delete all scan history for ${domain}? This action cannot be undone.`}
       />
     </>
-  )
+  );
 }

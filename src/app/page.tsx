@@ -10,9 +10,10 @@ import { ProgressBar } from '@/components/ProgressBar'
 import { SummaryDashboard } from '@/components/SummaryDashboard'
 import { type AnalysisResult, type DebugInfo } from '@/types'
 import { Loader2 } from 'lucide-react'
-import { useToast } from '@/components/ui/use-toast'
+import { toast } from '@/components/ui/toast'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
+import { ClientSessionCheck } from '@/components/ClientSessionCheck'
 
 interface ApiResponse {
   results: AnalysisResult[];
@@ -38,9 +39,27 @@ interface SitemapSearchResponse {
 }
 
 export default function Home() {
-  const { data: session, status } = useSession()
+  return (
+    <ClientSessionCheck>
+      <div className="container mx-auto px-4 py-8">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-4">Sitemap SEO Analyzer</h1>
+          <p className="text-gray-600">Enter a website URL to analyze its sitemap and SEO metadata.</p>
+        </div>
+        <HomeContent />
+      </div>
+    </ClientSessionCheck>
+  )
+}
+
+function HomeContent() {
   const router = useRouter()
-  const { toast } = useToast()
+  const { data: session, status } = useSession({
+    required: true,
+    onUnauthenticated() {
+      router.push('/login')
+    },
+  })
   const [url, setUrl] = useState('')
   const [progress, setProgress] = useState<Progress | null>(null)
   const [sitemapResults, setSitemapResults] = useState<SitemapSearchResponse | null>(null)
@@ -203,11 +222,7 @@ export default function Home() {
           reader.releaseLock()
         } catch (error) {
           console.error(`Error analyzing sitemap ${sitemapUrl}:`, error)
-          toast({
-            title: 'Warning',
-            description: `Failed to analyze ${sitemapUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-            variant: 'warning'
-          })
+          toast.warning(`Failed to analyze ${sitemapUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`)
         }
       }
 
@@ -275,16 +290,16 @@ export default function Home() {
   }
 
   useEffect(() => {
-    if (status === 'unauthenticated') {
+    if (!session && status !== 'loading') {
       router.push('/login')
     }
-  }, [status, router])
+  }, [status, router, session])
 
   if (status === 'loading') {
     return <div className="flex min-h-screen items-center justify-center">Loading...</div>
   }
 
-  if (status === 'unauthenticated') {
+  if (!session) {
     return null
   }
 

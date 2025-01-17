@@ -3,7 +3,13 @@ import { getServerSession } from 'next-auth'
 import axios from 'axios'
 import { XMLParser } from 'fast-xml-parser'
 import * as cheerio from 'cheerio'
-import { type AnalysisResult, type DebugInfo } from '@/types'
+import { 
+  type AnalysisResult, 
+  type DebugInfo, 
+  type AnalysisResponse, 
+  type ErrorResponse,
+  type MemoryUsageInfo 
+} from '@/types'
 import { prisma } from '@/lib/db'
 import { authOptions } from '@/lib/auth'
 import { Prisma } from '@prisma/client'
@@ -25,13 +31,20 @@ export async function POST(req: Request) {
   const encoder = new TextEncoder()
   let writer: WritableStreamDefaultWriter | undefined
   let searchHistoryId: string | undefined
+  const memUsage = process.memoryUsage()
   const debugInfo: DebugInfo = {
     xmlParsingStatus: 'pending',
     httpStatus: 0,
     networkErrors: [],
     parsingErrors: [],
     rateLimitingIssues: [],
-    memoryUsage: process.memoryUsage(),
+    memoryUsage: {
+      heapUsed: memUsage.heapUsed,
+      heapTotal: memUsage.heapTotal,
+      rss: memUsage.rss,
+      external: memUsage.external,
+      arrayBuffers: memUsage.arrayBuffers,
+    },
     processingTime: 0,
     requestLogs: [],
   }
@@ -83,13 +96,15 @@ export async function POST(req: Request) {
     processRequest(url, writer, debugInfo, startTime, searchHistoryId).catch(async (error) => {
       console.error('Background processing error:', error)
       if (searchHistoryId) {
+        const errorResponse: ErrorResponse = {
+          error: error instanceof Error ? error.message : String(error),
+          debugInfo,
+        }
         await prisma.searchHistory.update({
           where: { id: searchHistoryId },
           data: {
             status: 'failed',
-            results: error instanceof Error 
-              ? { error: error.message, debugInfo }
-              : { error: String(error), debugInfo },
+            results: errorResponse as unknown as Prisma.JsonObject,
           },
         }).catch(console.error)
       }
@@ -99,17 +114,26 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error('Error processing sitemap:', error)
     debugInfo.processingTime = (Date.now() - startTime) / 1000
-    debugInfo.memoryUsage = process.memoryUsage()
+    const memUsage = process.memoryUsage()
+    debugInfo.memoryUsage = {
+      heapUsed: memUsage.heapUsed,
+      heapTotal: memUsage.heapTotal,
+      rss: memUsage.rss,
+      external: memUsage.external,
+      arrayBuffers: memUsage.arrayBuffers,
+    }
 
     // Update search history if user is authenticated
     if (searchHistoryId) {
+      const errorResponse: ErrorResponse = {
+        error: error instanceof Error ? error.message : String(error),
+        debugInfo,
+      }
       await prisma.searchHistory.update({
         where: { id: searchHistoryId },
         data: {
           status: 'failed',
-          results: error instanceof Error 
-            ? { error: error.message, debugInfo }
-            : { error: String(error), debugInfo },
+          results: errorResponse as unknown as Prisma.JsonObject,
         },
       }).catch(console.error)
     }
@@ -128,7 +152,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ 
       error: error instanceof Error ? error.message : String(error),
       debugInfo,
-    }, { status: 500 })
+    } as ErrorResponse, { status: 500 })
   } finally {
     try {
       await writer?.close()
@@ -290,15 +314,26 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
 
     // Send final results
     debugInfo.processingTime = (Date.now() - startTime) / 1000
-    debugInfo.memoryUsage = process.memoryUsage()
+    const memUsage = process.memoryUsage()
+    debugInfo.memoryUsage = {
+      heapUsed: memUsage.heapUsed,
+      heapTotal: memUsage.heapTotal,
+      rss: memUsage.rss,
+      external: memUsage.external,
+      arrayBuffers: memUsage.arrayBuffers,
+    }
 
     // Update search history if user is authenticated
     if (searchHistoryId) {
+      const analysisResponse: AnalysisResponse = {
+        results,
+        debugInfo,
+      }
       await prisma.searchHistory.update({
         where: { id: searchHistoryId },
         data: {
           status: 'complete',
-          results: { results, debugInfo },
+          results: analysisResponse as unknown as Prisma.JsonObject,
         },
       }).catch(console.error)
     }
@@ -311,17 +346,26 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
   } catch (error) {
     console.error('Error processing sitemap:', error)
     debugInfo.processingTime = (Date.now() - startTime) / 1000
-    debugInfo.memoryUsage = process.memoryUsage()
+    const memUsage = process.memoryUsage()
+    debugInfo.memoryUsage = {
+      heapUsed: memUsage.heapUsed,
+      heapTotal: memUsage.heapTotal,
+      rss: memUsage.rss,
+      external: memUsage.external,
+      arrayBuffers: memUsage.arrayBuffers,
+    }
 
     // Update search history if user is authenticated
     if (searchHistoryId) {
+      const errorResponse: ErrorResponse = {
+        error: error instanceof Error ? error.message : String(error),
+        debugInfo,
+      }
       await prisma.searchHistory.update({
         where: { id: searchHistoryId },
         data: {
           status: 'failed',
-          results: error instanceof Error 
-            ? { error: error.message, debugInfo }
-            : { error: String(error), debugInfo },
+          results: errorResponse as unknown as Prisma.JsonObject,
         },
       }).catch(console.error)
     }
@@ -358,9 +402,7 @@ async function extractUrlsFromSitemap(sitemapUrl: string, debugInfo: DebugInfo):
       trimValues: true,
       parseTagValue: true,
       stopNodes: ['**.loc'],
-      isArray: (name, jpath, isLeafNode, isAttribute) => {
-        return name === 'url' || name === 'sitemap'
-      },
+      isArray: (name) => name === 'url' || name === 'sitemap',
     })
 
     let parsed;
@@ -388,7 +430,7 @@ async function extractUrlsFromSitemap(sitemapUrl: string, debugInfo: DebugInfo):
       for (let i = 0; i < sitemapUrls.length; i += CONCURRENT_REQUESTS) {
         const batch = sitemapUrls.slice(i, i + CONCURRENT_REQUESTS)
         const batchResults = await Promise.all(
-          batch.map(url => extractUrlsFromSitemap(url, debugInfo))
+          batch.map((url: string) => extractUrlsFromSitemap(url, debugInfo))
         )
         results.push(...batchResults)
       }

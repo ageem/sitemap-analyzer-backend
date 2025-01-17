@@ -14,20 +14,29 @@ export interface TechnicalSpecs {
   pageSize: number; // in bytes
 }
 
+export interface RequestLog {
+  url: string;
+  status: number;
+  duration: number;
+}
+
+export interface MemoryUsageInfo {
+  heapUsed: number;
+  heapTotal: number;
+  rss: number;
+  external: number;
+  arrayBuffers: number;
+}
+
 export interface DebugInfo {
   xmlParsingStatus: string;
   httpStatus: number;
   networkErrors: string[];
   parsingErrors: string[];
   rateLimitingIssues: string[];
-  memoryUsage: NodeJS.MemoryUsage;
+  memoryUsage: MemoryUsageInfo;
   processingTime: number;
-  stackTrace?: string;
-  requestLogs: {
-    url: string;
-    status: number;
-    duration: number;
-  }[];
+  requestLogs: RequestLog[];
 }
 
 export interface AnalysisResult {
@@ -36,5 +45,14 @@ export interface AnalysisResult {
   issues: string[];
   metadata: MetaData;
   technicalSpecs: TechnicalSpecs;
-  debugInfo?: DebugInfo;
+}
+
+export interface AnalysisResponse {
+  results: AnalysisResult[];
+  debugInfo: DebugInfo;
+}
+
+export interface ErrorResponse {
+  error: string;
+  debugInfo: DebugInfo;
 }

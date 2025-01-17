@@ -1,39 +1,25 @@
-import { useEffect } from 'react'
-import { useToast } from './use-toast'
+'use client'
 
-interface ToastProps {
-  title?: string
-  description?: string
-  variant?: 'default' | 'success' | 'warning' | 'error'
-}
+import * as React from 'react'
+import { Toaster as Sonner, toast } from 'sonner'
 
-export function Toast({ title, description, variant = 'default' }: ToastProps) {
-  const { dismiss } = useToast()
+export { toast }
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      dismiss()
-    }, 5000)
-
-    return () => clearTimeout(timer)
-  }, [dismiss])
-
-  const variantClasses = {
-    default: 'bg-white',
-    success: 'bg-green-100',
-    warning: 'bg-yellow-100',
-    error: 'bg-red-100',
-  }
-
+export function Toaster() {
   return (
-    <div
-      className={`fixed bottom-4 right-4 p-4 rounded-lg shadow-lg ${variantClasses[variant]}`}
-      role="alert"
-    >
-      {title && <h4 className="font-semibold mb-1">{title}</h4>}
-      {description && <p className="text-sm">{description}</p>}
-    </div>
+    <Sonner
+      className="toaster group"
+      toastOptions={{
+        classNames: {
+          toast:
+            'group toast group-[.toaster]:bg-background group-[.toaster]:text-foreground group-[.toaster]:border-border group-[.toaster]:shadow-lg',
+          description: 'group-[.toast]:text-muted-foreground',
+          actionButton:
+            'group-[.toast]:bg-primary group-[.toast]:text-primary-foreground',
+          cancelButton:
+            'group-[.toast]:bg-muted group-[.toast]:text-muted-foreground',
+        },
+      }}
+    />
   )
 }
-
-export { useToast }
