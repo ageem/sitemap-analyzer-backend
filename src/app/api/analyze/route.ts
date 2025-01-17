@@ -6,6 +6,7 @@ import * as cheerio from 'cheerio'
 import { type AnalysisResult, type DebugInfo } from '@/types'
 import { prisma } from '@/lib/db'
 import { authOptions } from '@/lib/auth'
+import { Prisma } from '@prisma/client'
 
 const RATE_LIMIT_DELAY = 1000 // 1 second between requests
 const MAX_RETRIES = 3
@@ -61,7 +62,7 @@ export async function POST(req: Request) {
           userId,
           sitemapUrl: url,
           status: 'in_progress',
-          results: null,
+          results: Prisma.JsonNull,
         },
       })
       searchHistoryId = searchHistory.id
@@ -86,10 +87,9 @@ export async function POST(req: Request) {
           where: { id: searchHistoryId },
           data: {
             status: 'failed',
-            results: JSON.stringify({ 
-              error: error instanceof Error ? error.message : String(error),
-              debugInfo,
-            }),
+            results: error instanceof Error 
+              ? { error: error.message, debugInfo }
+              : { error: String(error), debugInfo },
           },
         }).catch(console.error)
       }
@@ -107,10 +107,9 @@ export async function POST(req: Request) {
         where: { id: searchHistoryId },
         data: {
           status: 'failed',
-          results: JSON.stringify({ 
-            error: error instanceof Error ? error.message : String(error),
-            debugInfo,
-          }),
+          results: error instanceof Error 
+            ? { error: error.message, debugInfo }
+            : { error: String(error), debugInfo },
         },
       }).catch(console.error)
     }
@@ -299,7 +298,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
         where: { id: searchHistoryId },
         data: {
           status: 'complete',
-          results: JSON.stringify({ results, debugInfo }),
+          results: { results, debugInfo },
         },
       }).catch(console.error)
     }
@@ -320,10 +319,9 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
         where: { id: searchHistoryId },
         data: {
           status: 'failed',
-          results: JSON.stringify({ 
-            error: error instanceof Error ? error.message : String(error),
-            debugInfo,
-          }),
+          results: error instanceof Error 
+            ? { error: error.message, debugInfo }
+            : { error: String(error), debugInfo },
         },
       }).catch(console.error)
     }
