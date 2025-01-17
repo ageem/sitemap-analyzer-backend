@@ -302,15 +302,15 @@ async function extractUrlsFromSitemap(sitemapUrl: string, debugInfo: DebugInfo):
     if (parsed.urlset?.url) {
       // Standard sitemap format
       const urls = Array.isArray(parsed.urlset.url)
-        ? parsed.urlset.url.map((item: any) => item.loc)
+        ? parsed.urlset.url.map((item: { loc: string }) => item.loc)
         : [parsed.urlset.url.loc]
-      return urls.filter(url => url && typeof url === 'string')
+      return urls.filter((url: string) => typeof url === 'string')
     } else if (parsed.sitemapindex?.sitemap) {
       // Sitemap index - recursively process child sitemaps
       const sitemaps = Array.isArray(parsed.sitemapindex.sitemap)
         ? parsed.sitemapindex.sitemap
         : [parsed.sitemapindex.sitemap]
-      const sitemapUrls = sitemaps.map((item: any) => item.loc).filter(url => url && typeof url === 'string')
+      const sitemapUrls = sitemaps.map((item: { loc: string }) => item.loc).filter(url => url && typeof url === 'string')
       
       // Process all child sitemaps in parallel
       const urlPromises = sitemapUrls.map(url => extractUrlsFromSitemap(url, debugInfo))
