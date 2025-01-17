@@ -36,10 +36,11 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { url } = await req.json()
+    const body = await req.json().catch(() => ({}))
+    const url = body?.url
 
-    if (!url || typeof url !== 'string') {
-      throw new Error('Invalid URL provided')
+    if (!url || typeof url !== 'string' || !url.startsWith('http')) {
+      throw new Error('Invalid URL provided. URL must be a string and start with http:// or https://')
     }
 
     const session = await getServerSession(authOptions)
@@ -48,6 +49,7 @@ export async function POST(req: Request) {
     if (session?.user?.email) {
       const user = await prisma.user.findUnique({
         where: { email: session.user.email },
+        select: { id: true },
       })
       userId = user?.id
     }
@@ -59,6 +61,7 @@ export async function POST(req: Request) {
           userId,
           sitemapUrl: url,
           status: 'in_progress',
+          results: null,
         },
       })
       searchHistoryId = searchHistory.id
@@ -76,7 +79,21 @@ export async function POST(req: Request) {
     })
 
     // Process in the background
-    processRequest(url, writer, debugInfo, startTime, searchHistoryId).catch(console.error)
+    processRequest(url, writer, debugInfo, startTime, searchHistoryId).catch(async (error) => {
+      console.error('Background processing error:', error)
+      if (searchHistoryId) {
+        await prisma.searchHistory.update({
+          where: { id: searchHistoryId },
+          data: {
+            status: 'failed',
+            results: JSON.stringify({ 
+              error: error instanceof Error ? error.message : String(error),
+              debugInfo,
+            }),
+          },
+        }).catch(console.error)
+      }
+    })
 
     return response
   } catch (error) {
@@ -95,7 +112,7 @@ export async function POST(req: Request) {
             debugInfo,
           }),
         },
-      })
+      }).catch(console.error)
     }
 
     try {
@@ -107,6 +124,12 @@ export async function POST(req: Request) {
     } catch (writeError) {
       console.error('Error writing to stream:', writeError)
     }
+
+    // Return error response if stream setup fails
+    return NextResponse.json({ 
+      error: error instanceof Error ? error.message : String(error),
+      debugInfo,
+    }, { status: 500 })
   } finally {
     try {
       await writer?.close()
@@ -129,8 +152,17 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
       throw new Error('No URLs found in sitemap(s)')
     }
 
-    // Remove duplicates
-    const uniqueUrls = Array.from(new Set(urls))
+    // Remove duplicates and invalid URLs
+    const uniqueUrls = Array.from(new Set(urls)).filter(url => {
+      try {
+        new URL(url)
+        return true
+      } catch {
+        debugInfo.parsingErrors.push(`Invalid URL found: ${url}`)
+        return false
+      }
+    })
+
     const totalUrls = uniqueUrls.length
     const results: AnalysisResult[] = []
     let currentDelay = MIN_DELAY
@@ -154,30 +186,38 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
         while (!success && retries < MAX_RETRIES) {
           try {
             const pageStartTime = Date.now()
-            const response = await axios.get(pageUrl, { timeout: TIMEOUT })
+            const response = await axios.get(pageUrl, { 
+              timeout: TIMEOUT,
+              maxRedirects: 5,
+              validateStatus: (status) => status < 400,
+            })
             const $ = cheerio.load(response.data)
             const loadSpeed = Date.now() - pageStartTime
             const pageSize = Buffer.byteLength(response.data, 'utf8')
 
             // Extract metadata
             const metadata = {
-              title: $('title').text() || '',
-              description: $('meta[name="description"]').attr('content') || '',
-              keywords: $('meta[name="keywords"]').attr('content') || '',
-              newsKeywords: $('meta[name="news_keywords"]').attr('content') || '',
-              ogSiteName: $('meta[property="og:site_name"]').attr('content') || '',
-              ogTitle: $('meta[property="og:title"]').attr('content') || '',
-              ogDescription: $('meta[property="og:description"]').attr('content') || '',
-              ogImage: $('meta[property="og:image"]').attr('content') || '',
+              title: $('title').text().trim() || '',
+              description: $('meta[name="description"]').attr('content')?.trim() || '',
+              keywords: $('meta[name="keywords"]').attr('content')?.trim() || '',
+              newsKeywords: $('meta[name="news_keywords"]').attr('content')?.trim() || '',
+              ogSiteName: $('meta[property="og:site_name"]').attr('content')?.trim() || '',
+              ogTitle: $('meta[property="og:title"]').attr('content')?.trim() || '',
+              ogDescription: $('meta[property="og:description"]').attr('content')?.trim() || '',
+              ogImage: $('meta[property="og:image"]').attr('content')?.trim() || '',
             }
 
             const issues: string[] = []
             
             // Validate metadata
-            if (metadata.title.length > 60) {
+            if (!metadata.title) {
+              issues.push('Missing title')
+            } else if (metadata.title.length > 60) {
               issues.push('Title exceeds 60 characters')
             }
-            if (metadata.description.length > 160) {
+            if (!metadata.description) {
+              issues.push('Missing description')
+            } else if (metadata.description.length > 160) {
               issues.push('Description exceeds 160 characters')
             }
             if (!metadata.keywords) {
@@ -218,10 +258,14 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
               if (retries === MAX_RETRIES) {
                 debugInfo.networkErrors.push(`Failed to process ${pageUrl}: ${error.message}`)
               }
-              if (axios.isAxiosError(error) && error.response?.status === 429) {
-                debugInfo.rateLimitingIssues.push(`Rate limited on ${pageUrl}`)
-                currentDelay *= 2  // Double the delay when rate limited
-                await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries) * 1000))
+              if (axios.isAxiosError(error)) {
+                if (error.response?.status === 429) {
+                  debugInfo.rateLimitingIssues.push(`Rate limited on ${pageUrl}`)
+                  currentDelay *= 2  // Double the delay when rate limited
+                  await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries) * 1000))
+                } else {
+                  debugInfo.networkErrors.push(`HTTP ${error.response?.status} error for ${pageUrl}: ${error.message}`)
+                }
               }
             }
           }
@@ -231,7 +275,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
 
       // Wait for batch to complete
       const batchResults = await Promise.all(batchPromises)
-      results.push(...batchResults.filter(r => r !== null) as AnalysisResult[])
+      results.push(...batchResults.filter((r): r is AnalysisResult => r !== null))
       processedCount += batch.length
 
       // Send progress update
@@ -257,7 +301,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
           status: 'complete',
           results: JSON.stringify({ results, debugInfo }),
         },
-      })
+      }).catch(console.error)
     }
 
     await writer?.write(encoder.encode(`data: ${JSON.stringify({
@@ -281,7 +325,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
             debugInfo,
           }),
         },
-      })
+      }).catch(console.error)
     }
 
     try {
@@ -304,13 +348,21 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
 
 async function extractUrlsFromSitemap(sitemapUrl: string, debugInfo: DebugInfo): Promise<string[]> {
   try {
-    const sitemapResponse = await axios.get(sitemapUrl, { timeout: TIMEOUT })
+    const sitemapResponse = await axios.get(sitemapUrl, { 
+      timeout: TIMEOUT,
+      maxRedirects: 5,
+      validateStatus: (status) => status < 400,
+    })
+
     const parser = new XMLParser({
       ignoreAttributes: false,
       parseAttributeValue: true,
       trimValues: true,
       parseTagValue: true,
       stopNodes: ['**.loc'],
+      isArray: (name, jpath, isLeafNode, isAttribute) => {
+        return name === 'url' || name === 'sitemap'
+      },
     })
 
     let parsed;
@@ -323,26 +375,27 @@ async function extractUrlsFromSitemap(sitemapUrl: string, debugInfo: DebugInfo):
 
     if (parsed.urlset?.url) {
       // Standard sitemap format
-      const urls = Array.isArray(parsed.urlset.url)
-        ? parsed.urlset.url.map((item: { loc: string }) => item.loc)
-        : [parsed.urlset.url.loc]
-      return urls.filter((url: string) => typeof url === 'string')
+      const urls = parsed.urlset.url
+        .map((item: { loc: string }) => item.loc)
+        .filter((url: string) => typeof url === 'string')
+      return urls
     } else if (parsed.sitemapindex?.sitemap) {
       // Sitemap index - recursively process child sitemaps
-      const sitemaps = Array.isArray(parsed.sitemapindex.sitemap)
-        ? parsed.sitemapindex.sitemap
-        : [parsed.sitemapindex.sitemap]
-
-      const sitemapUrls = sitemaps
+      const sitemapUrls = parsed.sitemapindex.sitemap
         .map((item: { loc: string }) => item.loc)
         .filter((url: string) => typeof url === 'string')
 
-      // Process all child sitemaps in parallel
-      const urlPromises = sitemapUrls.map((url: string) => extractUrlsFromSitemap(url, debugInfo))
-      const nestedUrls = await Promise.all(urlPromises)
+      // Process all child sitemaps in parallel with a concurrency limit
+      const results = []
+      for (let i = 0; i < sitemapUrls.length; i += CONCURRENT_REQUESTS) {
+        const batch = sitemapUrls.slice(i, i + CONCURRENT_REQUESTS)
+        const batchResults = await Promise.all(
+          batch.map(url => extractUrlsFromSitemap(url, debugInfo))
+        )
+        results.push(...batchResults)
+      }
       
-      // Flatten and return all URLs
-      return nestedUrls.flat()
+      return results.flat()
     }
     return []
   } catch (error) {
@@ -354,9 +407,15 @@ async function extractUrlsFromSitemap(sitemapUrl: string, debugInfo: DebugInfo):
 }
 
 async function sendProgress(writer: WritableStreamDefaultWriter | undefined, progress: Progress) {
+  if (!writer) return
+  
   const encoder = new TextEncoder()
-  await writer?.write(encoder.encode(`data: ${JSON.stringify({
-    type: 'progress',
-    ...progress
-  })}\n\n`))
+  try {
+    await writer.write(encoder.encode(`data: ${JSON.stringify({
+      type: 'progress',
+      ...progress
+    })}\n\n`))
+  } catch (error) {
+    console.error('Error sending progress:', error)
+  }
 }

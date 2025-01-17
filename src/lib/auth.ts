@@ -3,14 +3,14 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { prisma } from "@/lib/db";
 
-interface CustomUser {
+export interface CustomUser {
   id: string;
   email: string;
-  name?: string;
+  name?: string | null;
 }
 
 export const authOptions: NextAuthOptions = {
-  debug: true, // Enable debug mode temporarily
+  debug: process.env.NODE_ENV !== 'production',
   pages: {
     signIn: "/login",
     error: "/login",
@@ -31,28 +31,39 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials): Promise<CustomUser | null> {
-        try {
-          if (!credentials?.email || !credentials.password) {
-            throw new Error("Missing credentials");
-          }
+        if (!credentials?.email || !credentials.password) {
+          return null;
+        }
 
+        try {
           const user = await prisma.user.findUnique({
             where: {
-              email: credentials.email,
+              email: credentials.email.toLowerCase(),
+            },
+            select: {
+              id: true,
+              email: true,
+              name: true,
+              password: true,
             },
           });
 
-          if (!user || !(await compare(credentials.password, user.password))) {
-            throw new Error("Invalid credentials");
+          if (!user) {
+            return null;
+          }
+
+          const isPasswordValid = await compare(credentials.password, user.password);
+          if (!isPasswordValid) {
+            return null;
           }
 
           return {
             id: user.id,
             email: user.email,
-            name: user.name || undefined,
+            name: user.name,
           };
         } catch (error) {
-          console.error("Auth error:", error);
+          console.error('Auth error:', error);
           return null;
         }
       },
@@ -66,10 +77,10 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }) {
-      if (session?.user) {
+      if (session.user) {
         session.user.id = token.id as string;
       }
       return session;
     },
   },
-};
+}
