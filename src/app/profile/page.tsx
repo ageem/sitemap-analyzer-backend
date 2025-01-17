@@ -16,13 +16,15 @@ export default function ProfilePage() {
     return null
   }
 
-  if (status === 'loading') {
+  if (status === 'loading' || !session?.user) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         Loading...
       </div>
     )
   }
+
+  const userInitial = session.user.email?.[0]?.toUpperCase() || '?'
 
   return (
     <div className="min-h-screen bg-gray-50 py-12">
@@ -36,14 +38,14 @@ export default function ProfilePage() {
                 <div className="flex items-center space-x-4 mb-4">
                   <div className="w-16 h-16 rounded-full bg-blue-600 flex items-center justify-center">
                     <span className="text-white text-2xl font-medium">
-                      {session.user?.email?.[0].toUpperCase()}
+                      {userInitial}
                     </span>
                   </div>
                   <div>
                     <h2 className="text-xl font-medium text-gray-900">
-                      {session.user?.name || 'User'}
+                      {session.user.name || 'User'}
                     </h2>
-                    <p className="text-gray-500">{session.user?.email}</p>
+                    <p className="text-gray-500">{session.user.email}</p>
                   </div>
                 </div>
               </div>
@@ -53,11 +55,11 @@ export default function ProfilePage() {
                 <dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
                   <div>
                     <dt className="text-sm font-medium text-gray-500">Email</dt>
-                    <dd className="mt-1 text-sm text-gray-900">{session.user?.email}</dd>
+                    <dd className="mt-1 text-sm text-gray-900">{session.user.email}</dd>
                   </div>
                   <div>
                     <dt className="text-sm font-medium text-gray-500">Name</dt>
-                    <dd className="mt-1 text-sm text-gray-900">{session.user?.name || 'Not set'}</dd>
+                    <dd className="mt-1 text-sm text-gray-900">{session.user.name || 'Not set'}</dd>
                   </div>
                   <div>
                     <dt className="text-sm font-medium text-gray-500">Member Since</dt>

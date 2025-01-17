@@ -56,10 +56,10 @@ export default function HistoryPage() {
   const [history, setHistory] = useState<SearchHistoryItem[]>([])
 
   useEffect(() => {
-    if (status === 'authenticated' && session?.user?.email) {
-      fetchHistory()
-    } else if (status === 'unauthenticated') {
+    if (status === 'unauthenticated') {
       router.push('/login')
+    } else if (status === 'authenticated' && session?.user) {
+      fetchHistory()
     }
   }, [status, session])
 
