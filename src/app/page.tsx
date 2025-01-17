@@ -1,12 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useMutation } from '@tanstack/react-query'
+import { useSession } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
 import { DebugPanel } from '@/components/DebugPanel'
 import { ResultsTable } from '@/components/ResultsTable'
 import { ProgressBar } from '@/components/ProgressBar'
 import { SummaryDashboard } from '@/components/SummaryDashboard'
 import { type AnalysisResult, type DebugInfo } from '@/types'
+import { Loader2 } from 'lucide-react'
+import { toast } from '@/components/ui/toast'
+import { Input } from '@/components/ui/Input'
+import { Button } from '@/components/ui/Button'
 
 interface ApiResponse {
   results: AnalysisResult[];
@@ -20,10 +26,23 @@ interface Progress {
 }
 
 export default function Home() {
+  const { data: session, status } = useSession()
+  const router = useRouter()
   const [url, setUrl] = useState('')
   const [progress, setProgress] = useState<Progress | null>(null)
-  
-  const { mutate, data, isPending, error } = useMutation({
+  const [sitemapResults, setSitemapResults] = useState<{
+    fromRobotsTxt: string[];
+    commonLocations: Array<{
+      url: string;
+      exists: boolean;
+      isIndex?: boolean;
+    }>;
+  } | null>(null)
+  const [isLoadingSitemaps, setIsLoadingSitemaps] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [isAnalyzingAll, setIsAnalyzingAll] = useState(false)
+
+  const { mutate: analyzeSitemap, data, isPending } = useMutation({
     mutationKey: ['analyze'],
     mutationFn: async (sitemapUrl: string) => {
       setProgress(null)
@@ -98,85 +117,343 @@ export default function Home() {
     }
   })
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const { mutate: analyzeAllSitemaps, data: allSitemapsData } = useMutation({
+    mutationKey: ['analyzeAll'],
+    mutationFn: async () => {
+      if (!sitemapResults) return
+
+      setIsAnalyzingAll(true)
+      let totalUrlsProcessed = 0
+      let totalUrlsToProcess = 0
+      const allResults: AnalysisResult[] = []
+
+      const allSitemaps = [
+        ...sitemapResults.fromRobotsTxt,
+        ...sitemapResults.commonLocations.filter(l => l.exists).map(l => l.url)
+      ]
+
+      // Process sitemaps sequentially to better track progress
+      for (const sitemapUrl of allSitemaps) {
+        try {
+          const response = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: sitemapUrl })
+          })
+
+          if (!response.ok) {
+            const errorData = await response.json()
+            throw new Error(errorData.error || 'Failed to analyze sitemap')
+          }
+
+          const reader = response.body?.getReader()
+          if (!reader) throw new Error('Failed to read response')
+
+          const decoder = new TextDecoder()
+          let lastProgress = { total: 0, current: 0 }
+            
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            const chunk = decoder.decode(value)
+            const lines = chunk.split('\n')
+
+            for (const line of lines) {
+              if (!line.trim()) continue
+              const data = JSON.parse(line.replace('data: ', ''))
+              
+              if (data.type === 'progress') {
+                // Update total URLs count when we first get it
+                if (data.total > 0 && lastProgress.total === 0) {
+                  totalUrlsToProcess += data.total
+                  setProgress(prev => ({
+                    total: totalUrlsToProcess,
+                    current: totalUrlsProcessed,
+                    status: 'analyzing'
+                  }))
+                }
+                
+                // Calculate the delta of processed URLs since last update
+                const delta = data.current - lastProgress.current
+                if (delta > 0) {
+                  totalUrlsProcessed += delta
+                  setProgress(prev => ({
+                    total: totalUrlsToProcess,
+                    current: totalUrlsProcessed,
+                    status: 'analyzing'
+                  }))
+                }
+                
+                lastProgress = { total: data.total, current: data.current }
+              } else if (data.type === 'complete') {
+                allResults.push(...(data.results || []))
+              } else if (data.type === 'error') {
+                throw new Error(data.error)
+              }
+            }
+          }
+
+          reader.releaseLock()
+        } catch (error) {
+          console.error(`Error analyzing sitemap ${sitemapUrl}:`, error)
+          toast({
+            title: 'Warning',
+            description: `Failed to analyze ${sitemapUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            variant: 'warning'
+          })
+        }
+      }
+
+      setProgress({
+        total: totalUrlsToProcess,
+        current: totalUrlsProcessed,
+        status: 'complete'
+      })
+      setIsAnalyzingAll(false)
+      
+      return { results: allResults }
+    }
+  })
+
+  const findSitemaps = async (domain: string) => {
+    setError(null)
+    setIsLoadingSitemaps(true)
+    setSitemapResults(null)
+    
+    try {
+      const response = await fetch('/api/find-sitemaps', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ domain }),
+      })
+
+      const data = await response.json()
+      if (data.error) {
+        throw new Error(data.error)
+      }
+
+      setSitemapResults(data)
+      
+      // If we found exactly one sitemap, set it as the URL
+      const allSitemaps = [...data.fromRobotsTxt, ...data.commonLocations.filter(loc => loc.exists).map(loc => loc.url)]
+      if (allSitemaps.length === 1) {
+        setUrl(allSitemaps[0])
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to find sitemaps')
+    } finally {
+      setIsLoadingSitemaps(false)
+    }
+  }
+
+  const handleDomainSearch = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    mutate(url)
+    const domain = url.replace(/^https?:\/\//, '').split('/')[0]
+    findSitemaps(domain)
+  }
+
+  const handleSitemapSelect = (sitemap: string) => {
+    setUrl(sitemap)
+    setSitemapResults(null)
+    setProgress(null)
+    analyzeSitemap(sitemap)
+  }
+
+  const handleAnalyzeClick = () => {
+    setSitemapResults(null)
+    setProgress(null)
+    analyzeSitemap(url)
+  }
+
+  useEffect(() => {
+    if (status === 'unauthenticated') {
+      router.push('/login')
+    }
+  }, [status, router])
+
+  if (status === 'loading') {
+    return <div className="flex min-h-screen items-center justify-center">Loading...</div>
+  }
+
+  if (status === 'unauthenticated') {
+    return null
   }
 
   return (
     <main className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-        <div className="text-center mb-8 sm:mb-12">
-          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-3 sm:mb-4">Sitemap SEO Analyzer</h1>
-          <p className="text-base sm:text-lg text-gray-600 px-4">Analyze your sitemap.xml for SEO issues and metadata completeness</p>
+        <div className="text-center mb-8">
+          <h1 className="text-4xl font-bold mb-2">Sitemap SEO Analyzer</h1>
+          <p className="text-gray-600">Analyze your sitemap.xml for SEO issues and metadata completeness</p>
         </div>
         
         <div className="max-w-3xl mx-auto mb-8 sm:mb-12 px-4 sm:px-0">
-          <form onSubmit={handleSubmit} className="bg-white shadow-sm rounded-lg p-4 sm:p-6">
-            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-              <input
-                type="url"
-                placeholder="Enter sitemap URL..."
+          <form onSubmit={handleDomainSearch} className="w-full max-w-2xl space-y-4">
+            <div className="flex flex-col space-y-2">
+              <Input
+                type="text"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                className="flex-1 px-3 sm:px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm sm:text-base"
-                required
+                placeholder="Enter domain (e.g., example.com) or full sitemap URL"
+                className="flex-1"
               />
-              <button
-                type="submit"
-                disabled={isPending}
-                className="px-4 sm:px-8 py-2 sm:py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors text-sm sm:text-base whitespace-nowrap"
-              >
-                {isPending ? 'Analyzing...' : 'Analyze'}
-              </button>
-            </div>
-          </form>
-        </div>
-
-        {error && (
-          <div className="max-w-3xl mx-auto mb-8">
-            <div className="bg-red-50 border-l-4 border-red-400 p-4 rounded-r-lg">
-              <div className="flex">
-                <div className="flex-shrink-0">
-                  <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                  </svg>
-                </div>
-                <div className="ml-3">
-                  <p className="text-sm text-red-700">
-                    {error instanceof Error ? error.message : 'An error occurred'}
-                  </p>
-                </div>
+              <div className="text-sm text-gray-500">
+                Tip: Enter just the domain name to discover available sitemaps
               </div>
             </div>
-          </div>
-        )}
 
-        {isPending && progress && (
-          <div className="max-w-3xl mx-auto mb-8">
-            <ProgressBar
-              progress={(progress.current / progress.total) * 100}
-              status={progress.status}
-              total={progress.total}
-              current={progress.current}
-            />
-          </div>
-        )}
+            <div className="flex space-x-2">
+              <Button
+                type="submit"
+                disabled={!url || isLoadingSitemaps || isPending || isAnalyzingAll}
+              >
+                {isLoadingSitemaps ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Finding Sitemaps...
+                  </>
+                ) : (
+                  'Find Sitemaps'
+                )}
+              </Button>
+              {url.endsWith('.xml') && (
+                <Button
+                  type="button"
+                  onClick={handleAnalyzeClick}
+                  disabled={!url || isLoadingSitemaps || isPending || isAnalyzingAll}
+                >
+                  {isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    'Analyze Sitemap'
+                  )}
+                </Button>
+              )}
+            </div>
+          </form>
 
-        {data?.results && (
-          <>
+          {error && (
+            <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg">
+              {error}
+            </div>
+          )}
+
+          {sitemapResults && (
+            <div className="mt-6 w-full max-w-2xl space-y-6">
+              {sitemapResults.fromRobotsTxt.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-3">Sitemaps found in robots.txt:</h3>
+                  <div className="space-y-2">
+                    {sitemapResults.fromRobotsTxt.map((sitemap, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-3 bg-white rounded-lg shadow hover:shadow-md transition-shadow"
+                      >
+                        <span className="text-sm text-gray-600 truncate flex-1 mr-4">
+                          {sitemap}
+                        </span>
+                        <Button
+                          size="sm"
+                          onClick={() => handleSitemapSelect(sitemap)}
+                          disabled={isPending || isAnalyzingAll}
+                        >
+                          Analyze
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {sitemapResults.commonLocations.some(loc => loc.exists) && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-3">
+                    {sitemapResults.fromRobotsTxt.length === 0 
+                      ? 'Found these sitemaps:' 
+                      : 'Additional sitemaps found:'}
+                  </h3>
+                  <div className="space-y-2">
+                    {sitemapResults.commonLocations
+                      .filter(loc => loc.exists)
+                      .map((location, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center justify-between p-3 bg-white rounded-lg shadow hover:shadow-md transition-shadow"
+                        >
+                          <div className="flex-1 mr-4">
+                            <span className="text-sm text-gray-600 truncate block">
+                              {location.url}
+                            </span>
+                            {location.isIndex && (
+                              <span className="text-xs text-blue-600 mt-1">
+                                This appears to be a sitemap index file
+                              </span>
+                            )}
+                          </div>
+                          <Button
+                            size="sm"
+                            onClick={() => handleSitemapSelect(location.url)}
+                            disabled={isPending || isAnalyzingAll}
+                          >
+                            Analyze
+                          </Button>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              {(sitemapResults.fromRobotsTxt.length > 0 || sitemapResults.commonLocations.some(loc => loc.exists)) && (
+                <div className="flex justify-center mt-6">
+                  <Button
+                    onClick={() => analyzeAllSitemaps()}
+                    disabled={isPending || isAnalyzingAll}
+                    className="bg-green-500 hover:bg-green-600 text-white"
+                  >
+                    {isAnalyzingAll ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Analyzing All Sitemaps...
+                      </>
+                    ) : (
+                      'Analyze All Sitemaps'
+                    )}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="max-w-5xl mx-auto">
+          {(isPending || isAnalyzingAll) && progress && (
             <div className="mb-8">
-              <SummaryDashboard results={data.results} />
+              <ProgressBar
+                progress={(progress.current / progress.total) * 100}
+                status={progress.status}
+                total={progress.total}
+                current={progress.current}
+              />
             </div>
-            <div className="mt-8">
-              <ResultsTable results={data.results} />
-            </div>
-          </>
-        )}
+          )}
 
-        {/* Debug Panel - Commented out for now
-        {data?.debugInfo && <DebugPanel info={data.debugInfo} />}
-        */}
+          {(data?.results || allSitemapsData?.results) && (
+            <>
+              <div className="mb-8">
+                <SummaryDashboard results={allSitemapsData?.results || data?.results || []} />
+              </div>
+              <div className="mt-8">
+                <ResultsTable results={allSitemapsData?.results || data?.results || []} />
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </main>
   )

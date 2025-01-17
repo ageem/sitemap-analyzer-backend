@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
 import axios from 'axios'
 import { XMLParser } from 'fast-xml-parser'
 import * as cheerio from 'cheerio'
 import { type AnalysisResult, type DebugInfo } from '@/types'
+import { prisma } from '@/lib/db'
+import { authOptions } from '../auth/[...nextauth]/route'
 
 const RATE_LIMIT_DELAY = 1000 // 1 second between requests
 const MAX_RETRIES = 3
@@ -31,6 +34,28 @@ export async function POST(req: Request) {
 
   try {
     const { url } = await req.json()
+    const session = await getServerSession(authOptions)
+    let userId: string | undefined
+
+    if (session?.user?.email) {
+      const user = await prisma.user.findUnique({
+        where: { email: session.user.email },
+      })
+      userId = user?.id
+    }
+
+    // Create initial search history record if user is authenticated
+    let searchHistoryId: string | undefined
+    if (userId) {
+      const searchHistory = await prisma.searchHistory.create({
+        data: {
+          userId,
+          sitemapUrl: url,
+          status: 'in_progress',
+        },
+      })
+      searchHistoryId = searchHistory.id
+    }
 
     // Create a TransformStream for sending progress updates
     const stream = new TransformStream()
@@ -44,68 +69,58 @@ export async function POST(req: Request) {
     })
 
     // Process in the background
-    processRequest(url, writer, debugInfo, startTime).catch(console.error)
+    processRequest(url, writer, debugInfo, startTime, searchHistoryId).catch(console.error)
 
     return response
   } catch (error) {
+    console.error('Error processing sitemap:', error)
     debugInfo.processingTime = (Date.now() - startTime) / 1000
     debugInfo.memoryUsage = process.memoryUsage()
-    
-    if (error instanceof Error) {
-      debugInfo.stackTrace = error.stack
-      return NextResponse.json({
-        error: error.message,
-        debugInfo,
-      }, { status: 500 })
+
+    // Update search history if user is authenticated
+    if (searchHistoryId) {
+      await prisma.searchHistory.update({
+        where: { id: searchHistoryId },
+        data: {
+          status: 'failed',
+          results: JSON.stringify({ error: error.message }),
+        },
+      })
     }
-    
-    return NextResponse.json({
-      error: 'An unknown error occurred',
-      debugInfo,
-    }, { status: 500 })
+
+    try {
+      await writer.write(encoder.encode(`data: ${JSON.stringify({
+        type: 'error',
+        error: error instanceof Error ? error.message : 'An error occurred while processing the sitemap',
+      })}\n\n`))
+    } catch (writeError) {
+      console.error('Error writing to stream:', writeError)
+    }
+  } finally {
+    try {
+      await writer.close()
+    } catch (closeError) {
+      console.error('Error closing writer:', closeError)
+    }
   }
 }
 
-async function processRequest(url: string, writer: WritableStreamDefaultWriter, debugInfo: DebugInfo, startTime: number) {
+async function processRequest(url: string, writer: WritableStreamDefaultWriter, debugInfo: DebugInfo, startTime: number, searchHistoryId?: string) {
   const encoder = new TextEncoder()
   
   try {
-    // Fetch and parse sitemap
+    // Extract all URLs recursively from sitemaps
     debugInfo.xmlParsingStatus = 'fetching'
-    const sitemapResponse = await axios.get(url, { timeout: TIMEOUT })
-    debugInfo.httpStatus = sitemapResponse.status
-
-    debugInfo.xmlParsingStatus = 'parsing'
-    const parser = new XMLParser({
-      ignoreAttributes: false,
-      parseAttributeValue: true,
-    })
-    const parsed = parser.parse(sitemapResponse.data)
+    const urls = await extractUrlsFromSitemap(url, debugInfo)
     debugInfo.xmlParsingStatus = 'success'
 
-    // Extract URLs from sitemap, handling different sitemap formats
-    let urls: string[] = []
-    if (parsed.urlset?.url) {
-      // Standard sitemap format
-      urls = Array.isArray(parsed.urlset.url)
-        ? parsed.urlset.url.map((item: any) => item.loc)
-        : [parsed.urlset.url.loc]
-    } else if (parsed.sitemapindex?.sitemap) {
-      // Sitemap index format
-      const sitemaps = Array.isArray(parsed.sitemapindex.sitemap)
-        ? parsed.sitemapindex.sitemap
-        : [parsed.sitemapindex.sitemap]
-      urls = sitemaps.map((item: any) => item.loc)
-    }
-
-    // Clean up URLs
-    urls = urls.filter(url => url && typeof url === 'string')
-
     if (!urls.length) {
-      throw new Error('No URLs found in sitemap')
+      throw new Error('No URLs found in sitemap(s)')
     }
 
-    const totalUrls = urls.length
+    // Remove duplicates
+    const uniqueUrls = [...new Set(urls)]
+    const totalUrls = uniqueUrls.length
     const results: AnalysisResult[] = []
     let currentDelay = MIN_DELAY
     let processedCount = 0
@@ -118,8 +133,8 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter, 
     })
 
     // Process URLs in batches
-    for (let i = 0; i < urls.length; i += CONCURRENT_REQUESTS) {
-      const batch = urls.slice(i, i + CONCURRENT_REQUESTS)
+    for (let i = 0; i < uniqueUrls.length; i += CONCURRENT_REQUESTS) {
+      const batch = uniqueUrls.slice(i, i + CONCURRENT_REQUESTS)
       const batchPromises = batch.map(async (pageUrl) => {
         let retries = 0
         let success = false
@@ -220,20 +235,90 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter, 
     debugInfo.processingTime = (Date.now() - startTime) / 1000
     debugInfo.memoryUsage = process.memoryUsage()
 
+    // Update search history if user is authenticated
+    if (searchHistoryId) {
+      await prisma.searchHistory.update({
+        where: { id: searchHistoryId },
+        data: {
+          status: 'complete',
+          results: JSON.stringify(results),
+        },
+      })
+    }
+
     await writer.write(encoder.encode(`data: ${JSON.stringify({
       type: 'complete',
       results,
       debugInfo
     })}\n\n`))
   } catch (error) {
-    if (error instanceof Error) {
+    console.error('Error processing sitemap:', error)
+    debugInfo.processingTime = (Date.now() - startTime) / 1000
+    debugInfo.memoryUsage = process.memoryUsage()
+
+    // Update search history if user is authenticated
+    if (searchHistoryId) {
+      await prisma.searchHistory.update({
+        where: { id: searchHistoryId },
+        data: {
+          status: 'failed',
+          results: JSON.stringify({ error: error.message }),
+        },
+      })
+    }
+
+    try {
       await writer.write(encoder.encode(`data: ${JSON.stringify({
         type: 'error',
-        error: error.message
+        error: error instanceof Error ? error.message : 'An error occurred while processing the sitemap',
       })}\n\n`))
+    } catch (writeError) {
+      console.error('Error writing to stream:', writeError)
     }
   } finally {
-    await writer.close()
+    try {
+      await writer.close()
+    } catch (closeError) {
+      console.error('Error closing writer:', closeError)
+    }
+  }
+}
+
+async function extractUrlsFromSitemap(sitemapUrl: string, debugInfo: DebugInfo): Promise<string[]> {
+  try {
+    const sitemapResponse = await axios.get(sitemapUrl, { timeout: TIMEOUT })
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      parseAttributeValue: true,
+    })
+    const parsed = parser.parse(sitemapResponse.data)
+
+    if (parsed.urlset?.url) {
+      // Standard sitemap format
+      const urls = Array.isArray(parsed.urlset.url)
+        ? parsed.urlset.url.map((item: any) => item.loc)
+        : [parsed.urlset.url.loc]
+      return urls.filter(url => url && typeof url === 'string')
+    } else if (parsed.sitemapindex?.sitemap) {
+      // Sitemap index - recursively process child sitemaps
+      const sitemaps = Array.isArray(parsed.sitemapindex.sitemap)
+        ? parsed.sitemapindex.sitemap
+        : [parsed.sitemapindex.sitemap]
+      const sitemapUrls = sitemaps.map((item: any) => item.loc).filter(url => url && typeof url === 'string')
+      
+      // Process all child sitemaps in parallel
+      const urlPromises = sitemapUrls.map(url => extractUrlsFromSitemap(url, debugInfo))
+      const nestedUrls = await Promise.all(urlPromises)
+      
+      // Flatten and return all URLs
+      return nestedUrls.flat()
+    }
+    return []
+  } catch (error) {
+    if (error instanceof Error) {
+      debugInfo.parsingErrors.push(`Error processing sitemap ${sitemapUrl}: ${error.message}`)
+    }
+    return [] // Continue with other sitemaps if one fails
   }
 }
 
