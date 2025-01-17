@@ -21,6 +21,8 @@ interface Progress {
 
 export async function POST(req: Request) {
   const startTime = Date.now()
+  const encoder = new TextEncoder()
+  let writer: WritableStreamDefaultWriter
   const debugInfo: DebugInfo = {
     xmlParsingStatus: 'pending',
     httpStatus: 0,
@@ -36,6 +38,7 @@ export async function POST(req: Request) {
     const { url } = await req.json()
     const session = await getServerSession(authOptions)
     let userId: string | undefined
+    let searchHistoryId: string | undefined
 
     if (session?.user?.email) {
       const user = await prisma.user.findUnique({
@@ -45,7 +48,6 @@ export async function POST(req: Request) {
     }
 
     // Create initial search history record if user is authenticated
-    let searchHistoryId: string | undefined
     if (userId) {
       const searchHistory = await prisma.searchHistory.create({
         data: {
@@ -59,7 +61,7 @@ export async function POST(req: Request) {
 
     // Create a TransformStream for sending progress updates
     const stream = new TransformStream()
-    const writer = stream.writable.getWriter()
+    writer = stream.writable.getWriter()
     const response = new Response(stream.readable, {
       headers: {
         'Content-Type': 'text/event-stream',
