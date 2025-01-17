@@ -1,12 +1,16 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
 import axios from 'axios'
 import { XMLParser } from 'fast-xml-parser'
 import * as cheerio from 'cheerio'
 import { prisma } from '@/lib/db'
-import { authOptions } from '@/lib/auth'
-import { type ErrorResponse, type DebugInfo } from '@/types/api'
-import { Prisma } from '@prisma/client'
+import { type AnalysisResult, type DebugInfo } from '@/types'
+import { serializeForPrisma, serializeDebugInfo } from '@/lib/serialization'
+
+const RATE_LIMIT_DELAY = 1000 // 1 second between requests
+const MAX_RETRIES = 3
+const TIMEOUT = 10000 // 10 seconds
+const CONCURRENT_REQUESTS = 5  // Number of concurrent requests
+const MIN_DELAY = 200  // Minimum delay between requests in ms
 
 interface Progress {
   total: number
@@ -14,19 +18,8 @@ interface Progress {
   status: 'starting' | 'analyzing' | 'complete'
 }
 
-const RATE_LIMIT_DELAY = 1000 // 1 second between requests
-const MAX_RETRIES = 3
-const BATCH_SIZE = 10  // Number of URLs to process in each batch
-const CONCURRENT_REQUESTS = 5  // Number of concurrent requests
-const MIN_DELAY = 200  // Minimum delay between requests in ms
-
-let writer: WritableStreamDefaultWriter | undefined
-
 export async function POST(req: Request) {
   const startTime = Date.now()
-  const encoder = new TextEncoder()
-  let searchHistoryId: string | undefined
-  const memUsage = process.memoryUsage()
   const debugInfo: DebugInfo = {
     xmlParsingStatus: 'pending',
     httpStatus: '0',
@@ -34,65 +27,24 @@ export async function POST(req: Request) {
     parsingErrors: [],
     rateLimitingIssues: [],
     memoryUsage: {
-      heapUsed: String(memUsage.heapUsed),
-      heapTotal: String(memUsage.heapTotal),
-      rss: String(memUsage.rss),
-      external: String(memUsage.external),
-      arrayBuffers: String(memUsage.arrayBuffers)
+      heapUsed: String(process.memoryUsage().heapUsed),
+      heapTotal: String(process.memoryUsage().heapTotal),
+      rss: String(process.memoryUsage().rss),
+      external: String(process.memoryUsage().external),
+      arrayBuffers: String(process.memoryUsage().arrayBuffers)
     },
     processingTime: '0',
-    requestLogs: [],
+    requestLogs: []
   }
 
+  let searchHistoryId: string | undefined
+
   try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user?.email) {
-      return NextResponse.json(
-        { error: 'Not authenticated', status: 'failed' } as ErrorResponse,
-        { status: 401 }
-      )
-    }
-
     const { url } = await req.json()
-    if (!url) {
-      return NextResponse.json(
-        { error: 'URL is required', status: 'failed' } as ErrorResponse,
-        { status: 400 }
-      )
-    }
-
-    debugInfo.url = url
-    debugInfo.userEmail = session.user.email
-
-    // Find the user
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found', status: 'failed' } as ErrorResponse,
-        { status: 404 }
-      )
-    }
-
-    // Create a search history entry
-    const searchHistory = await prisma.searchHistory.create({
-      data: {
-        userId: user.id,
-        sitemapUrl: url,
-        status: 'in_progress',
-        results: JSON.stringify({ status: 'starting' }),
-      },
-    })
-
-    if (searchHistory) {
-      searchHistoryId = searchHistory.id
-    }
 
     // Create a TransformStream for sending progress updates
     const stream = new TransformStream()
-    writer = stream.writable.getWriter()
+    const writer = stream.writable.getWriter()
     const response = new Response(stream.readable, {
       headers: {
         'Content-Type': 'text/event-stream',
@@ -109,21 +61,9 @@ export async function POST(req: Request) {
           where: { id: searchHistoryId },
           data: {
             status: 'failed',
-            results: JSON.stringify({
+            results: serializeForPrisma({
               error: error instanceof Error ? error.message : String(error),
-              debugInfo: {
-                startTime,
-                memoryUsage: {
-                  heapUsed: String(memUsage.heapUsed),
-                  heapTotal: String(memUsage.heapTotal),
-                  rss: String(memUsage.rss),
-                  external: String(memUsage.external),
-                  arrayBuffers: String(memUsage.arrayBuffers)
-                },
-                errors: debugInfo.networkErrors || [],
-                issues: debugInfo.rateLimitingIssues || [],
-                logs: debugInfo.requestLogs || []
-              }
+              debugInfo: serializeDebugInfo(debugInfo)
             })
           },
         })
@@ -133,28 +73,15 @@ export async function POST(req: Request) {
     return response
   } catch (error) {
     console.error('Error in analyze route:', error)
-    const memUsage = process.memoryUsage()
     
     if (searchHistoryId) {
       await prisma.searchHistory.update({
         where: { id: searchHistoryId },
         data: {
           status: 'failed',
-          results: JSON.stringify({
+          results: serializeForPrisma({
             error: error instanceof Error ? error.message : String(error),
-            debugInfo: {
-              startTime,
-              memoryUsage: {
-                heapUsed: String(memUsage.heapUsed),
-                heapTotal: String(memUsage.heapTotal),
-                rss: String(memUsage.rss),
-                external: String(memUsage.external),
-                arrayBuffers: String(memUsage.arrayBuffers)
-              },
-              errors: debugInfo.networkErrors || [],
-              issues: debugInfo.rateLimitingIssues || [],
-              logs: debugInfo.requestLogs || []
-            }
+            debugInfo: serializeDebugInfo(debugInfo)
           })
         },
       })
@@ -164,12 +91,6 @@ export async function POST(req: Request) {
       error: error instanceof Error ? error.message : String(error),
       status: 'failed'
     }, { status: 500 })
-  } finally {
-    try {
-      await writer?.close()
-    } catch (closeError) {
-      console.error('Error closing writer:', closeError)
-    }
   }
 }
 
@@ -182,8 +103,8 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
     let processedCount = 0
 
     // Process URLs in batches
-    for (let i = 0; i < uniqueUrls.length; i += BATCH_SIZE) {
-      const batch = uniqueUrls.slice(i, i + BATCH_SIZE)
+    for (let i = 0; i < uniqueUrls.length; i += CONCURRENT_REQUESTS) {
+      const batch = uniqueUrls.slice(i, i + CONCURRENT_REQUESTS)
       
       // Process each URL in the batch
       const batchPromises = batch.map(async (pageUrl) => {
@@ -194,7 +115,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
         while (!success && retries < MAX_RETRIES) {
           try {
             const response = await axios.get(pageUrl, {
-              timeout: 10000,
+              timeout: TIMEOUT,
               maxRedirects: 5,
               validateStatus: (status) => status < 400,
             })
@@ -294,7 +215,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
       })
 
       // Add small delay between batches
-      if (i + BATCH_SIZE < uniqueUrls.length) {
+      if (i + CONCURRENT_REQUESTS < uniqueUrls.length) {
         await new Promise(resolve => setTimeout(resolve, currentDelay))
       }
     }
@@ -320,7 +241,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
         where: { id: searchHistoryId },
         data: {
           status: 'complete',
-          results: JSON.stringify(analysisData),
+          results: serializeForPrisma(analysisData),
         },
       })
     }
@@ -330,20 +251,15 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
     console.error('Error processing sitemap:', error)
     if (searchHistoryId) {
       const errorData = {
-        error: error instanceof Error ? error.message : String(error),
-        debugInfo: {
-          startTime,
-          memoryUsage: {
-            heapUsed: String(memUsage.heapUsed),
-            heapTotal: String(memUsage.heapTotal),
-            rss: String(memUsage.rss),
-            external: String(memUsage.external),
-            arrayBuffers: String(memUsage.arrayBuffers)
-          },
-          errors: debugInfo.networkErrors || [],
-          issues: debugInfo.rateLimitingIssues || [],
-          logs: debugInfo.requestLogs || []
-        },
+        error: error instanceof Error 
+          ? { 
+              error: error.message, 
+              debugInfo: serializeDebugInfo(debugInfo)
+            }
+          : { 
+              error: String(error),
+              debugInfo: serializeDebugInfo(debugInfo)
+            },
         status: 'failed',
       }
 
@@ -351,7 +267,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
         where: { id: searchHistoryId },
         data: {
           status: 'failed',
-          results: JSON.stringify(errorData),
+          results: serializeForPrisma(errorData),
         },
       })
     }
@@ -362,7 +278,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
 async function extractUrlsFromSitemap(sitemapUrl: string, debugInfo: DebugInfo): Promise<string[]> {
   try {
     const sitemapResponse = await axios.get(sitemapUrl, { 
-      timeout: 10000,
+      timeout: TIMEOUT,
       maxRedirects: 5,
       validateStatus: (status) => status < 400,
     })
