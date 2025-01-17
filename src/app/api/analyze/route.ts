@@ -85,7 +85,9 @@ export async function POST(req: Request) {
         where: { id: searchHistoryId },
         data: {
           status: 'failed',
-          results: JSON.stringify({ error: error.message }),
+          results: JSON.stringify({ 
+            error: error instanceof Error ? error.message : String(error) 
+          }),
         },
       })
     }
@@ -93,7 +95,7 @@ export async function POST(req: Request) {
     try {
       await writer?.write(encoder.encode(`data: ${JSON.stringify({
         type: 'error',
-        error: error instanceof Error ? error.message : 'An error occurred while processing the sitemap',
+        error: error instanceof Error ? error.message : String(error),
       })}\n\n`))
     } catch (writeError) {
       console.error('Error writing to stream:', writeError)
@@ -264,7 +266,9 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
         where: { id: searchHistoryId },
         data: {
           status: 'failed',
-          results: JSON.stringify({ error: error.message }),
+          results: JSON.stringify({ 
+            error: error instanceof Error ? error.message : String(error) 
+          }),
         },
       })
     }
@@ -272,7 +276,7 @@ async function processRequest(url: string, writer: WritableStreamDefaultWriter |
     try {
       await writer?.write(encoder.encode(`data: ${JSON.stringify({
         type: 'error',
-        error: error instanceof Error ? error.message : 'An error occurred while processing the sitemap',
+        error: error instanceof Error ? error.message : String(error),
       })}\n\n`))
     } catch (writeError) {
       console.error('Error writing to stream:', writeError)
