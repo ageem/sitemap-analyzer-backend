@@ -33,3 +33,32 @@ export interface AnalysisResult {
   }>
   error?: string
 }
+
+export interface DebugInfo {
+  startTime: number
+  memoryUsage: {
+    heapUsed: number
+    heapTotal: number
+    rss: number
+    external: number
+    arrayBuffers: number
+  }
+  parsingErrors: string[]
+  networkErrors: string[]
+  rateLimitingIssues: string[]
+  requestLogs: Array<{
+    url: string
+    status: number
+    duration: number
+  }>
+  [key: string]: any
+}
+
+export interface ErrorResponse {
+  error: string
+  debugInfo?: DebugInfo
+  status: 'failed'
+  data?: {
+    [key: string]: any
+  }
+}
