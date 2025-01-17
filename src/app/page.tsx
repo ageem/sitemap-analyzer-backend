@@ -25,20 +25,25 @@ interface Progress {
   status: 'starting' | 'analyzing' | 'complete';
 }
 
+interface SitemapLocation {
+  url: string
+  exists: boolean
+  isIndex?: boolean
+}
+
+interface SitemapSearchResponse {
+  fromRobotsTxt: string[]
+  commonLocations: SitemapLocation[]
+  error?: string
+}
+
 export default function Home() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const { toast } = useToast()
   const [url, setUrl] = useState('')
   const [progress, setProgress] = useState<Progress | null>(null)
-  const [sitemapResults, setSitemapResults] = useState<{
-    fromRobotsTxt: string[];
-    commonLocations: Array<{
-      url: string;
-      exists: boolean;
-      isIndex?: boolean;
-    }>;
-  } | null>(null)
+  const [sitemapResults, setSitemapResults] = useState<SitemapSearchResponse | null>(null)
   const [isLoadingSitemaps, setIsLoadingSitemaps] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isAnalyzingAll, setIsAnalyzingAll] = useState(false)
@@ -231,7 +236,7 @@ export default function Home() {
         body: JSON.stringify({ domain }),
       })
 
-      const data = await response.json()
+      const data: SitemapSearchResponse = await response.json()
       if (data.error) {
         throw new Error(data.error)
       }
