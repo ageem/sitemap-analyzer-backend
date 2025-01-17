@@ -10,7 +10,7 @@ import { ProgressBar } from '@/components/ProgressBar'
 import { SummaryDashboard } from '@/components/SummaryDashboard'
 import { type AnalysisResult, type DebugInfo } from '@/types'
 import { Loader2 } from 'lucide-react'
-import { toast } from '@/components/ui/toast'
+import { useToast } from '@/components/ui/use-toast'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 
@@ -28,6 +28,7 @@ interface Progress {
 export default function Home() {
   const { data: session, status } = useSession()
   const router = useRouter()
+  const { toast } = useToast()
   const [url, setUrl] = useState('')
   const [progress, setProgress] = useState<Progress | null>(null)
   const [sitemapResults, setSitemapResults] = useState<{
