@@ -310,10 +310,13 @@ async function extractUrlsFromSitemap(sitemapUrl: string, debugInfo: DebugInfo):
       const sitemaps = Array.isArray(parsed.sitemapindex.sitemap)
         ? parsed.sitemapindex.sitemap
         : [parsed.sitemapindex.sitemap]
-      const sitemapUrls = sitemaps.map((item: { loc: string }) => item.loc).filter(url => url && typeof url === 'string')
-      
+
+      const sitemapUrls = sitemaps
+        .map((item: { loc: string }) => item.loc)
+        .filter((url: string) => typeof url === 'string')
+
       // Process all child sitemaps in parallel
-      const urlPromises = sitemapUrls.map(url => extractUrlsFromSitemap(url, debugInfo))
+      const urlPromises = sitemapUrls.map((url: string) => extractUrlsFromSitemap(url, debugInfo))
       const nestedUrls = await Promise.all(urlPromises)
       
       // Flatten and return all URLs
