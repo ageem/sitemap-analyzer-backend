@@ -9,6 +9,11 @@ export interface CustomUser {
   name?: string | null;
 }
 
+interface Credentials {
+  email: string;
+  password: string;
+}
+
 export const authOptions: NextAuthOptions = {
   debug: process.env.NODE_ENV !== 'production',
   pages: {
@@ -30,7 +35,7 @@ export const authOptions: NextAuthOptions = {
         },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials): Promise<CustomUser | null> {
+      async authorize(credentials: Credentials | undefined): Promise<CustomUser | null> {
         if (!credentials?.email || !credentials.password) {
           return null;
         }
